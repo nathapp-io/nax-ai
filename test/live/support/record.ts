@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import type { PiDeps, PiResponse } from "../../../src/protocols/pi-client.ts";
 import type { ProtocolEvent } from "../../../src/protocols/types.ts";
-import { HEADER_ALLOWLIST, type RecordedMeta } from "../../support/fixture-types.ts";
+import { HEADER_ALLOWLIST, type RecordedFixture, type RecordedMeta } from "../../support/fixture-types.ts";
 
 const DIR = join(import.meta.dirname, "..", "..", "fixtures", "recorded");
 
@@ -42,7 +42,7 @@ export function recordingDeps(
   const write = (name: string): void => {
     const file = join(DIR, `${name}.json`);
     mkdirSync(dirname(file), { recursive: true });
-    const body = {
+    const body: RecordedFixture = {
       meta: { ...meta, recordedAt: new Date().toISOString().slice(0, 10) },
       response,
       events,
