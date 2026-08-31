@@ -46,6 +46,8 @@ export type {
 export { type Catalog, normaliseCatalog, type RawModel, type RawProvider } from "./providers/catalog.ts";
 export type {
   Pricing,
+  PricingRates,
+  PricingTier,
   ProviderAuth,
   ProviderOverride,
   ResolvedModel,
