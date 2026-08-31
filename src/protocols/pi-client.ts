@@ -21,6 +21,9 @@ import type {
   Usage as PiUsage,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
+import type { StopReason } from "../types.ts";
+import { toTokenUsage } from "../usage.ts";
+import { createToolArgAccumulator, parseToolArgs } from "./tool-args.ts";
 import type { ConversationMessage, Protocol, ProtocolEvent, ProtocolRequest } from "./types.ts";
 
 export type PiStreamFn = (
@@ -138,17 +141,106 @@ export function toPiOptions(req: ProtocolRequest): SimpleStreamOptions {
   };
 }
 
+/**
+ * pi-ai's terminal reasons, narrowed to ours.
+ *
+ * "deferred" is absent by design: we never request a deferred response, so
+ * receiving one means an assumption broke and it must surface rather than be
+ * folded into "stop". "content_filter" has no pi-ai equivalent and is
+ * unreachable here; it exists for a hand-written backend.
+ */
+const STOP_REASONS: Readonly<Record<string, StopReason>> = {
+  stop: "stop",
+  length: "length",
+  toolUse: "tool_use",
+};
+
+/** The in-progress tool call at a content index, when there is one. */
+function toolCallAt(partial: { content: readonly unknown[] }, index: number): { id: string; name: string } | undefined {
+  const block = partial.content[index];
+  if (typeof block !== "object" || block === null) return undefined;
+  const candidate = block as { type?: unknown; id?: unknown; name?: unknown };
+  if (candidate.type !== "toolCall" || typeof candidate.id !== "string" || typeof candidate.name !== "string") {
+    return undefined;
+  }
+  return { id: candidate.id, name: candidate.name };
+}
+
 export function createPiProtocol(name: string, deps: PiDeps): Protocol {
   return {
     name,
 
-    // biome-ignore lint/correctness/useYield: event mapping arrives in Task 4; until then the stream consumes without yielding.
     async *stream(req: ProtocolRequest): AsyncIterable<ProtocolEvent> {
       const model = await deps.resolveModel(req.model);
       const events = deps.stream(model, toPiContext(req, model), toPiOptions(req));
+      const toolArgs = createToolArgAccumulator();
 
-      for await (const _event of events) {
-        // Event mapping arrives in Task 4.
+      for await (const event of events) {
+        switch (event.type) {
+          case "text_delta":
+            yield { type: "text-delta", text: event.delta };
+            break;
+
+          case "thinking_delta":
+            yield { type: "thinking-delta", text: event.delta };
+            break;
+
+          case "toolcall_delta": {
+            // The delta carries neither id nor name; both are only on the
+            // in-progress call block that partial.content holds at this index.
+            const call = toolCallAt(event.partial, event.contentIndex);
+            if (call === undefined) break;
+            const rawInput = toolArgs.append(call.id, call.name, event.delta);
+            yield { type: "tool-call-partial", id: call.id, name: call.name, rawInput };
+            break;
+          }
+
+          case "toolcall_end": {
+            const pending = toolArgs.take(event.toolCall.id);
+            let input: unknown;
+            try {
+              input = parseToolArgs(pending?.raw ?? "");
+            } catch (cause) {
+              // An error event, not a throw: text and usage already yielded
+              // must survive.
+              yield {
+                type: "error",
+                error: {
+                  kind: "bad-request",
+                  message: `Tool "${event.toolCall.name}" returned unparseable arguments.`,
+                  cause,
+                },
+              };
+              return;
+            }
+            yield { type: "tool-call", call: { id: event.toolCall.id, name: event.toolCall.name, input } };
+            break;
+          }
+
+          case "done": {
+            const stopReason = STOP_REASONS[event.reason];
+            yield { type: "usage", usage: toTokenUsage(event.message.usage) };
+            if (stopReason === undefined) {
+              yield {
+                type: "error",
+                error: {
+                  kind: "unknown",
+                  message: `Upstream reported stop reason "${event.reason}", which nax-ai never requests.`,
+                },
+              };
+              return;
+            }
+            yield { type: "done", stopReason };
+            return;
+          }
+
+          default:
+            // start, text_start, text_end, thinking_start, thinking_end and
+            // toolcall_start carry nothing our vocabulary expresses: content
+            // is already delivered by the deltas. "error" is handled in the
+            // next task.
+            break;
+        }
       }
     },
   };

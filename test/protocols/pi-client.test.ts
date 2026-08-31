@@ -1,7 +1,7 @@
 import type { Api, AssistantMessageEvent, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { createPiProtocol, toPiContext, toPiOptions } from "../../src/protocols/pi-client.ts";
-import type { ProtocolRequest } from "../../src/protocols/types.ts";
+import type { ProtocolEvent, ProtocolRequest } from "../../src/protocols/types.ts";
 
 // biome-ignore lint/suspicious/noExportsInTest: Task 6's conformance suite imports these helpers from this file.
 export const MODEL: Model<Api> = {
@@ -150,5 +150,147 @@ describe("createPiProtocol", () => {
     expect(pi.calls).toHaveLength(1);
     expect(pi.calls[0]?.model.id).toBe("deepseek-chat");
     expect(pi.calls[0]?.context.systemPrompt).toBe("be terse");
+  });
+});
+
+/** A minimal AssistantMessage, enough for the terminal events. */
+function message(overrides: Record<string, unknown> = {}) {
+  return {
+    role: "assistant" as const,
+    content: [],
+    api: "openai-completions" as Api,
+    provider: "deepseek",
+    model: "deepseek-chat",
+    usage: {
+      input: 10,
+      output: 4,
+      cacheRead: 2,
+      cacheWrite: 1,
+      totalTokens: 17,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "stop" as const,
+    timestamp: 0,
+    ...overrides,
+  };
+}
+
+async function drain(events: AssistantMessageEvent[]) {
+  const out: ProtocolEvent[] = [];
+  for await (const event of createPiProtocol("openai-completions", fakePi(events).deps).stream(BASE)) out.push(event);
+  return out;
+}
+
+describe("createPiProtocol event mapping", () => {
+  it("drops start, text_start and text_end, and emits only the deltas", async () => {
+    const events = await drain([
+      { type: "start", partial: message() },
+      { type: "text_start", contentIndex: 0, partial: message() },
+      { type: "text_delta", contentIndex: 0, delta: "he", partial: message() },
+      { type: "text_delta", contentIndex: 0, delta: "llo", partial: message() },
+      { type: "text_end", contentIndex: 0, content: "hello", partial: message() },
+      { type: "done", reason: "stop", message: message() },
+    ] as AssistantMessageEvent[]);
+
+    expect(events.filter((e) => e.type === "text-delta")).toEqual([
+      { type: "text-delta", text: "he" },
+      { type: "text-delta", text: "llo" },
+    ]);
+  });
+
+  it("maps thinking deltas and drops their start and end", async () => {
+    const events = await drain([
+      { type: "thinking_start", contentIndex: 0, partial: message() },
+      { type: "thinking_delta", contentIndex: 0, delta: "hmm", partial: message() },
+      { type: "thinking_end", contentIndex: 0, content: "hmm", partial: message() },
+      { type: "text_delta", contentIndex: 1, delta: "ok", partial: message() },
+      { type: "done", reason: "stop", message: message() },
+    ] as AssistantMessageEvent[]);
+
+    expect(events).toContainEqual({ type: "thinking-delta", text: "hmm" });
+  });
+
+  it("recovers a partial tool call's id and name from partial.content", async () => {
+    const withCall = (_args: string) =>
+      message({ content: [{ type: "toolCall", id: "t1", name: "read", arguments: {} }] });
+
+    const events = await drain([
+      { type: "toolcall_start", contentIndex: 0, partial: withCall("") },
+      { type: "toolcall_delta", contentIndex: 0, delta: '{"path"', partial: withCall('{"path"') },
+      { type: "toolcall_delta", contentIndex: 0, delta: ':"a.ts"}', partial: withCall('{"path":"a.ts"}') },
+      {
+        type: "toolcall_end",
+        contentIndex: 0,
+        toolCall: { type: "toolCall", id: "t1", name: "read", arguments: { path: "a.ts" } },
+        partial: withCall('{"path":"a.ts"}'),
+      },
+      { type: "done", reason: "toolUse", message: message({ stopReason: "toolUse" }) },
+    ] as AssistantMessageEvent[]);
+
+    expect(events.filter((e) => e.type === "tool-call-partial")).toEqual([
+      { type: "tool-call-partial", id: "t1", name: "read", rawInput: '{"path"' },
+      { type: "tool-call-partial", id: "t1", name: "read", rawInput: '{"path":"a.ts"}' },
+    ]);
+    expect(events).toContainEqual({
+      type: "tool-call",
+      call: { id: "t1", name: "read", input: { path: "a.ts" } },
+    });
+  });
+
+  it("emits usage immediately before done, synthesised from the final message", async () => {
+    const events = await drain([
+      { type: "text_delta", contentIndex: 0, delta: "hi", partial: message() },
+      { type: "done", reason: "stop", message: message() },
+    ] as AssistantMessageEvent[]);
+
+    expect(events.slice(-2)).toEqual([
+      {
+        type: "usage",
+        usage: { inputTokens: 10, outputTokens: 4, cacheReadTokens: 2, cacheWriteTokens: 1 },
+      },
+      { type: "done", stopReason: "stop" },
+    ]);
+  });
+
+  it.each([
+    ["stop", "stop"],
+    ["length", "length"],
+    ["toolUse", "tool_use"],
+  ] as const)("maps pi stop reason %s to %s", async (piReason, ours) => {
+    const events = await drain([
+      { type: "text_delta", contentIndex: 0, delta: "hi", partial: message() },
+      { type: "done", reason: piReason, message: message({ stopReason: piReason }) },
+    ] as AssistantMessageEvent[]);
+
+    expect(events.at(-1)).toEqual({ type: "done", stopReason: ours });
+  });
+
+  it("treats a deferred stop reason as a defect rather than mapping it to stop", async () => {
+    const events = await drain([
+      { type: "text_delta", contentIndex: 0, delta: "hi", partial: message() },
+      { type: "done", reason: "deferred", message: message({ stopReason: "deferred" }) },
+    ] as AssistantMessageEvent[]);
+
+    expect(events.at(-1)).toMatchObject({ type: "error", error: { kind: "unknown" } });
+    expect(events.some((e) => e.type === "done")).toBe(false);
+  });
+
+  it("ends the stream on unparseable tool arguments without losing earlier events", async () => {
+    const withCall = message({ content: [{ type: "toolCall", id: "t1", name: "read", arguments: {} }] });
+
+    const events = await drain([
+      { type: "text_delta", contentIndex: 0, delta: "reading", partial: withCall },
+      { type: "toolcall_delta", contentIndex: 0, delta: '{"path"', partial: withCall },
+      {
+        type: "toolcall_end",
+        contentIndex: 0,
+        toolCall: { type: "toolCall", id: "t1", name: "read", arguments: {} },
+        partial: withCall,
+      },
+      { type: "done", reason: "toolUse", message: message() },
+    ] as AssistantMessageEvent[]);
+
+    expect(events[0]).toEqual({ type: "text-delta", text: "reading" });
+    expect(events.at(-1)).toMatchObject({ type: "error", error: { kind: "bad-request" } });
   });
 });
