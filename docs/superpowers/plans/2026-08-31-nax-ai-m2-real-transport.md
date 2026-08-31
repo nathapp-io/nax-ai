@@ -765,22 +765,24 @@ export function createPiProtocol(name: string, deps: PiDeps): Protocol {
 }
 ```
 
-Update the ALLOWED list at `scripts/check-pi-ai-imports.ts:24` and the two doc comments that name it:
+Extend the ALLOWED list at `scripts/check-pi-ai-imports.ts:24`. The `backend-pi.ts` pattern **stays for now** — those four files still exist and still import pi-ai, so removing it here would fail the gate. Task 6 deletes them and removes the pattern in the same commit:
 
 ```ts
 const ALLOWED = [
   /^src\/protocols\/pi-client\.ts$/,
   /^src\/providers\/pi-catalog\.ts$/,
   /^src\/auth\/pi-auth\.ts$/,
+  // Removed in Task 6, together with the four files it covers.
+  /^src\/protocols\/[^/]+\/backend-pi\.ts$/,
 ];
 ```
 
-Also update the header comment's "Allowed:" line and the final `console.error` message to name those three files rather than `backend-pi.ts`.
+Also update the header comment's "Allowed:" line to name the three new files alongside the temporary pattern, and the final `console.error` message to match.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `bun run lint && bun run typecheck && bun run test`
-Expected: PASS. The four `<protocol>/backend-pi.ts` files still exist and still import pi-ai, so if the gate now rejects them, that is expected — Task 6 deletes them. If it does, temporarily keep `/^src\/protocols\/[^/]+\/backend-pi\.ts$/` in ALLOWED and remove it in Task 6 Step 3.
+Expected: PASS, including `check-pi-ai-imports: clean`. The four `<protocol>/backend-pi.ts` files still exist and are still covered by the temporary ALLOWED pattern.
 
 - [ ] **Step 5: Commit**
 
@@ -1483,7 +1485,7 @@ git rm -r src/protocols/anthropic-messages src/protocols/openai-completions src/
 git rm test/protocols/anthropic-messages.test.ts test/protocols/openai-completions.test.ts test/protocols/openai-responses.test.ts test/protocols/openai-codex-responses.test.ts
 ```
 
-Remove `/^src\/protocols\/[^/]+\/backend-pi\.ts$/` from `ALLOWED` in `scripts/check-pi-ai-imports.ts` if Task 3 left it in place.
+Remove the temporary `/^src\/protocols\/[^/]+\/backend-pi\.ts$/` pattern from `ALLOWED` in `scripts/check-pi-ai-imports.ts`, and update the header comment and the `console.error` message so neither still mentions `backend-pi.ts`. The list is now exactly the three files named in the Global Constraints.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -2366,7 +2368,7 @@ If no Codex credential is available, stop and report that DoD item 4 is unmet ra
 
 Replace the "cannot make a network call" note at `README.md:16` with a short usage example:
 
-```markdown
+````markdown
 ```ts
 import { createClient, piProtocols, piProviders } from "@nathapp/nax-ai";
 
@@ -2380,7 +2382,7 @@ const result = await client.complete(model, { messages: [{ role: "user", content
 ```
 
 Install from the `next` dist-tag while the API is unstable: `npm install @nathapp/nax-ai@next`.
-```
+````
 
 - [ ] **Step 3: Update the ROADMAP**
 
