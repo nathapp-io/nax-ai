@@ -1,6 +1,6 @@
 # nax-ai roadmap
 
-**Last updated:** 2026-08-31 · **Current milestone:** M3 — recorded fixtures. M2 — real transport is complete. M1 merged to `main` in [#1](https://github.com/nathapp-io/nax-ai/pull/1) (`d3a3968`).
+**Last updated:** 2026-08-31 · **Current milestone:** M3 — recorded fixtures. M2 — real transport is done, publish pending. M1 merged to `main` in [#1](https://github.com/nathapp-io/nax-ai/pull/1) (`d3a3968`).
 
 This file records where the project is and what comes next. It is the entry point for anyone — human or agent — picking the work up cold.
 
@@ -26,7 +26,7 @@ The artifact is a point-in-time analysis and does not track progress — it is t
 |---|---|---|---|
 | **M0 — scaffold** | ✅ done | Package, toolchain, two working gates | no |
 | **M1 — protocol architecture** | ✅ done | `Protocol`, registry, catalog, client, 4 protocol backends | **no** |
-| **M2 — real transport** | ✅ done | `createPiClient`, auth wiring, first real LLM call | yes |
+| **M2 — real transport** | ✅ done (publish pending) | `createPiClient`, auth wiring, first real LLM call | yes |
 | **M3 — recorded fixtures** | 🚧 next | The suite that gates merges | yes |
 | **M4 — hardening** | ⬜ not started | Transport retry, `CredentialStore`, live canary | yes |
 
@@ -45,7 +45,7 @@ The seam that lets a wire protocol be replaced later without consumers noticing.
 
 Merged in #1 (`d3a3968`), all eleven tasks complete and the plan's Definition of Done passing. Note that the definition covers *verification*, not *capability* — see the warning above.
 
-### M2 — real transport ✅
+### M2 — real transport ✅ (publish pending)
 
 The critical path to a usable package, and the piece the M1 plan explicitly defers because it needs knowledge no document currently holds.
 
@@ -55,7 +55,7 @@ The critical path to a usable package, and the piece the M1 plan explicitly defe
 - First real completion against a cheap provider (`deepseek`, `groq`).
 - Publish `0.1.0` under the **`next`** dist-tag, never `latest`, while the API is unstable.
 
-**Executed via [`docs/superpowers/plans/2026-08-31-nax-ai-m2-real-transport.md`](docs/superpowers/plans/2026-08-31-nax-ai-m2-real-transport.md), 11 tasks in dependency order — all complete. The live probe used a `DEEPSEEK_API_KEY`; the Codex OAuth check used a pre-existing pi credential, since M2 does not implement login.**
+**Executed via [`docs/superpowers/plans/2026-08-31-nax-ai-m2-real-transport.md`](docs/superpowers/plans/2026-08-31-nax-ai-m2-real-transport.md), 11 tasks in dependency order — all complete. `0.1.0` is not yet on the `next` dist-tag: publishing awaits explicit consent. The live probe used a `DEEPSEEK_API_KEY`; the Codex OAuth check used a pre-existing pi credential, since M2 does not implement login.**
 
 **M2's design is written and approved: [`docs/superpowers/specs/2026-08-31-nax-ai-m2-real-transport-design.md`](docs/superpowers/specs/2026-08-31-nax-ai-m2-real-transport-design.md).** It was designed against pi-ai's actual types rather than sketched, and it supersedes the three mismatches listed below with a fuller set.
 
