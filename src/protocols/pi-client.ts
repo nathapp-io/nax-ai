@@ -23,7 +23,8 @@ import type {
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import type { StopReason } from "../types.ts";
+import { createPiAuthResolver, toPiCredentialStore } from "../auth/pi-auth.ts";
+import type { CredentialStore, StopReason } from "../types.ts";
 import { toTokenUsage, totalTokens } from "../usage.ts";
 import { classifyHttpError, parseRetryAfter } from "./errors.ts";
 import type { PiProtocolOptions } from "./pi-protocols.ts";
@@ -285,16 +286,24 @@ export function createPiProtocol(name: string, deps: PiDeps): Protocol {
 let shared: MutableModels | undefined;
 
 /**
- * One Models instance is shared across the four protocols, so they share one
- * credential store and one catalog.
- *
- * Credentials are deliberately NOT forwarded yet. nax-ai's CredentialStore is
- * not pi-ai's shape, and passing it through unadapted would fail at runtime
- * rather than at the type level. Task 9 adds the adapter and the parameter.
+ * The credential-backed twin of `shared`, keyed by the store itself. Each of
+ * the four protocol entries resolves lazily through `createPiDeps`, so without
+ * this memo a consumer with credentials would construct one Models per entry
+ * instead of the single instance pi-protocols.ts promises.
  */
-export function createPiDeps(_options: PiProtocolOptions = {}): PiDeps {
-  if (shared === undefined) shared = builtinModels();
-  const models = shared;
+const credentialed = new WeakMap<CredentialStore, MutableModels>();
+
+export function createPiDeps(options: PiProtocolOptions = {}): PiDeps {
+  const store = options.credentials;
+  let models: MutableModels;
+  if (store === undefined) {
+    models = shared ??= builtinModels();
+  } else {
+    models = credentialed.get(store) ?? builtinModels({ credentials: toPiCredentialStore(store) });
+    credentialed.set(store, models);
+  }
+
+  const resolver = createPiAuthResolver(models);
 
   return {
     resolveModel: async (modelId) => {
@@ -303,10 +312,17 @@ export function createPiDeps(_options: PiProtocolOptions = {}): PiDeps {
       return found;
     },
 
-    stream: (model, context, options_, onResponse) =>
-      models.streamSimple(model, context, {
+    stream: async function* (model, context, options_, onResponse) {
+      // Resolve through nax-ai's own port, not through Models' internal path,
+      // so the seam a native backend will use is exercised in production
+      // rather than merely exported.
+      const auth = await resolver.resolve({ provider: model.provider, model: model.id });
+      yield* models.streamSimple(model, context, {
         ...options_,
+        ...(auth.apiKey !== undefined ? { apiKey: auth.apiKey } : {}),
+        ...(auth.headers !== undefined ? { headers: { ...auth.headers } } : {}),
         onResponse: (response) => onResponse({ status: response.status, headers: response.headers }),
-      }),
+      });
+    },
   };
 }
