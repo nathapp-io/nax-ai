@@ -184,17 +184,25 @@ This is not a tie-break for tidiness. `anthropic` offers both, and mapping it to
 
 A test asserts both halves through `piProviders`: `anthropic` normalises to api-key and loads, and a synthetic provider declaring `{ kind: "oauth", flow: "anthropic" }` still fails.
 
-### 6.3 The env var name is not available
+### 6.3 The env var name cannot be filled honestly
 
-Our api-key variant declares `env: string`, the environment variable name. pi-ai does not expose it at catalog time: `ApiKeyAuth` carries `name` (a display string such as "Anthropic API key"), `login` and `resolve`, with the variable name internal to `resolve()`. The `env-api-keys` module that holds the constants is not in pi-ai's export map.
-
-`env` therefore becomes optional, and `piProviders` leaves it unset:
+Our api-key variant declares `env: string`, the environment variable name. `piProviders` leaves it unset, and the field becomes optional:
 
 ```ts
 { readonly kind: "api-key"; readonly env?: string }
 ```
 
-Guessing it by convention from the provider id would be wrong for some providers and silently so. The field is descriptive only — section 7 resolves auth through `AuthResolver`, which never reads it — and a hand-written `RawProvider` can still declare it. `AuthResult.source` reports the real variable name after resolution, for status display.
+pi-ai does hold a provider-to-variable table, in `env-api-keys.ts`. It is reachable in three ways, and all three fail for different reasons. Verified against installed pi-ai 0.84.4 and against pi's own source at `github.com/earendil-works/pi`.
+
+| Route | Why not |
+|---|---|
+| `getApiKeyEnvVars(provider)` — the candidate table itself | Module-private. Not exported from `env-api-keys.ts`, not re-exported by `compat.ts`. |
+| `findEnvKeys(provider)` — public via `/compat` | Returns only the variables **currently set in the process environment**, filtered by `getProviderEnvValue`. Verified: with no keys exported, it returns `undefined` for all of `anthropic`, `deepseek`, `groq`, `openai`, `openai-codex`, `minimax`, `opencode-go`. Calling it at catalog time would make the catalog's contents depend on ambient environment — exactly what M1 section 4 forbids: "nax-ai never reads the environment to decide behaviour... would make tests order-dependent." |
+| `getEnvApiKey(provider)` — public via `/compat` | Returns the key's **value**. Putting a live secret in a descriptive catalog field is not a naming solution. |
+
+Even with the table in hand, `env: string` is the wrong shape: `anthropic` maps to three candidates — `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` — which is why pi-ai's own accessor returns `string[]`.
+
+Guessing by convention from the provider id would be silently wrong for a long tail (`google` reads `GEMINI_API_KEY`, `azure-openai-responses` reads `AZURE_OPENAI_API_KEY`, `opencode-go` reads `OPENCODE_API_KEY`). The field is descriptive only — section 7 resolves auth through `AuthResolver`, which never reads it — and a hand-written `RawProvider` can still declare it. `AuthResult.source` reports the real variable name after resolution, which is the honest place for status display to get it.
 
 `piProviders(["nope"])` throws rather than silently returning fewer providers.
 
@@ -225,7 +233,14 @@ nax-ai's `CredentialStore` is adapted onto pi-ai's. Both are `read`/`modify`/`de
 { readonly kind: "api-key"; readonly key: string; readonly env?: Readonly<Record<string, string>> }
 ```
 
-pi-ai's `ApiKeyCredential` carries `env?: ProviderEnv` — Cloudflare account and gateway ids live there. Because `modify` is read-modify-write, an adapter without a slot for it would drop that field on every write. The failure would be silent and would only appear as a provider that stops resolving. One optional property makes the adapter faithful instead of quietly destructive.
+pi-ai's `ApiKeyCredential` carries `env?: ProviderEnv`. Because `modify` is read-modify-write, an adapter without a slot for it would drop that field on every write. The failure would be silent and would only appear as a provider that stops resolving.
+
+That field carries more than it first appears. pi's own agent — `packages/coding-agent/src/core/auth-storage.ts`, the `CredentialStore` backing `~/.pi/agent/auth.json` — stores `key` as a literal, a `$VAR` / `${VAR}` template, or a `!command`, and its `read()` resolves templates through `resolveConfigValue(credential.key, credential.env)`. So `env` is the **substitution scope** for the stored key, not merely a bag of Cloudflare account ids. Dropping it would break every `$VAR`-style credential, not one provider's edge case.
+
+Two consequences for nax-ai:
+
+- **`key` is opaque.** It may not be a literal secret. nax-ai never inspects, compares, logs or validates it; it round-trips it and passes it on. Template and command resolution belongs to the store, which is consumer-supplied — pi-ai itself receives an already-resolved literal.
+- **The reference implementation is worth copying at M4.** That same file locks `auth.json` with `proper-lockfile` and writes with mode `0o600` under a `0o700` directory. Our deferred cross-process locking item should follow it rather than invent something, and it confirms `modify` is the right place for the lock.
 
 ### 7.2 A caveat carried into the plan
 
