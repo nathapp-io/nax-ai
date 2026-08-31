@@ -22,6 +22,10 @@ Every task's requirements implicitly include this section.
 - **Anthropic OAuth is prohibited** — never add `"anthropic"` to `PERMITTED_OAUTH_FLOWS`. It is server-blocked and a Consumer ToS violation. Anthropic *API-key* billing is fine and unrelated.
 - **nax-ai holds no policy.** No reading `process.env` to decide behaviour, no cost computation, no tool execution, no rate-limit retry.
 - **Strict TypeScript.** `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax` are all on. `exactOptionalPropertyTypes` in particular means `{ foo?: string }` will not accept `{ foo: undefined }` — construct objects conditionally rather than assigning `undefined`.
+- **No non-null assertions in tests.** `style/noNonNullAssertion` is `error` under `test/**`. Hoist a fixture to a named const rather than writing `FIXTURES[0]!`.
+- **Deep relative imports are fine here.** nax bans `../../*` via `noRestrictedImports`; that rule has been removed from this repo's `biome.json` deliberately. nax can ban it because it uses `@/` path aliases and bundles with `bun build`; nax-ai emits *unbundled* ESM, and `tsc` does not rewrite path aliases on emit — an alias would appear literally in `dist/` and fail for consumers. Do not re-add the rule or introduce path aliases.
+
+**Pre-verified:** every code block in Tasks 1–8 has been compiled against this repo's `tsconfig.json` and its tests executed — 35 tests, `tsc --noEmit` exit 0. The code is known to work as written; if something fails, suspect a transcription slip rather than a design error.
 
 **Commands:**
 
@@ -1441,22 +1445,24 @@ import { describe, expect, it } from "vitest";
 import { normaliseCatalog, type RawProvider } from "../../src/providers/catalog.ts";
 import { OAuthFlowProhibitedError } from "../../src/auth/oauth-policy.ts";
 
+const DEEPSEEK: RawProvider = {
+  id: "deepseek",
+  baseUrl: "https://api.deepseek.com",
+  auth: { kind: "api-key", env: "DEEPSEEK_API_KEY" },
+  defaultProtocol: "openai-completions",
+  models: [
+    {
+      id: "deepseek-chat",
+      pricing: { input: 0.27, output: 1.1, cacheRead: 0.07, cacheWrite: 0 },
+      contextWindow: 64000,
+      supportsTools: true,
+      thinkingLevels: [],
+    },
+  ],
+};
+
 const RAW: readonly RawProvider[] = [
-  {
-    id: "deepseek",
-    baseUrl: "https://api.deepseek.com",
-    auth: { kind: "api-key", env: "DEEPSEEK_API_KEY" },
-    defaultProtocol: "openai-completions",
-    models: [
-      {
-        id: "deepseek-chat",
-        pricing: { input: 0.27, output: 1.1, cacheRead: 0.07, cacheWrite: 0 },
-        contextWindow: 64000,
-        supportsTools: true,
-        thinkingLevels: [],
-      },
-    ],
-  },
+  DEEPSEEK,
   {
     id: "opencode-go",
     baseUrl: "https://opencode.ai/zen/go/v1",
@@ -1495,14 +1501,14 @@ describe("normaliseCatalog", () => {
   it("rejects a provider declaring the prohibited anthropic OAuth flow", () => {
     // The gate on the real path, not just in a unit test of the policy module.
     const withProhibited: RawProvider[] = [
-      { ...RAW[0]!, id: "sneaky", auth: { kind: "oauth", flow: "anthropic" } },
+      { ...DEEPSEEK, id: "sneaky", auth: { kind: "oauth", flow: "anthropic" } },
     ];
     expect(() => normaliseCatalog(withProhibited)).toThrow(OAuthFlowProhibitedError);
   });
 
   it("accepts a provider declaring a permitted OAuth flow", () => {
     const withCodex: RawProvider[] = [
-      { ...RAW[0]!, id: "openai-codex", auth: { kind: "oauth", flow: "openai-codex" } },
+      { ...DEEPSEEK, id: "openai-codex", auth: { kind: "oauth", flow: "openai-codex" } },
     ];
     expect(() => normaliseCatalog(withCodex)).not.toThrow();
   });
