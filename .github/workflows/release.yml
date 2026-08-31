@@ -52,9 +52,15 @@ jobs:
       - name: Build
         run: bun run build
 
+      # Tag names reach this job as untrusted input: the `v*.*.*` filter still
+      # admits shell metacharacters, and a workflow_dispatch input is free text.
+      # Every one is passed through env and referenced as "$VAR", so it is never
+      # substituted into the script before the shell parses it. This job can
+      # publish to npm, so an injection here would be a supply-chain problem.
       - name: Validate version
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
           PKG_VERSION="v$(node -p "require('./package.json').version")"
           if [ "$TAG" != "$PKG_VERSION" ]; then
             echo "Tag $TAG does not match package.json version $PKG_VERSION"
@@ -68,8 +74,9 @@ jobs:
       # Releasing 1.0.0 is what flips this, and it flips by itself.
       - name: Set release info
         id: info
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
           VERSION="${TAG#v}"
           MAJOR="${VERSION%%.*}"
 
@@ -92,15 +99,17 @@ jobs:
 
       # Trusted publishing via OIDC - no npm token in this repository.
       - name: Publish to npm
-        run: npm publish --access public --tag ${{ steps.info.outputs.npm_tag }} --provenance
         env:
           NPM_CONFIG_PROVENANCE: "true"
+          NPM_TAG: ${{ steps.info.outputs.npm_tag }}
+        run: npm publish --access public --tag "$NPM_TAG" --provenance
 
       - name: Extract release notes
         id: notes
+        env:
+          VERSION: ${{ steps.info.outputs.version }}
         run: |
-          VERSION="${{ steps.info.outputs.version }}"
-          NOTES=$(awk "/^## \[${VERSION}\]/{found=1; next} /^## \[/{if(found) exit} found{print}" CHANGELOG.md 2>/dev/null || true)
+          NOTES=$(awk -v want="## [$VERSION]" '$0 == want {found=1; next} /^## \[/{if(found) exit} found{print}' CHANGELOG.md 2>/dev/null || true)
           if [ -n "$NOTES" ]; then
             echo "$NOTES" > /tmp/release-notes.md
             echo "has_notes=true" >> "$GITHUB_OUTPUT"
