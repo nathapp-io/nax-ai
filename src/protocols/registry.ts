@@ -93,8 +93,21 @@ export function createRegistry(entries: ProtocolEntries, selection: BackendSelec
     },
 
     validate() {
+      // Per-protocol overrides first: they take precedence over the default,
+      // and names a protocol outside `entries` must surface as unknown before
+      // any default-derived check runs. Throwing exits immediately, so the
+      // same defect is never reported twice.
       for (const [protocolName, backendId] of Object.entries(selection.byProtocol ?? {})) {
         const backends = backendsFor(protocolName);
+        if (backends[backendId] === undefined) {
+          throw new UnregisteredBackendError(protocolName, backendId, idsFor(backends));
+        }
+      }
+      // The default applies to every protocol not named in byProtocol. A
+      // `{ default: "native" }` selection must fail at startup, not on the
+      // first resolve().
+      for (const [protocolName, backends] of Object.entries(entries)) {
+        const backendId = selectedFor(protocolName);
         if (backends[backendId] === undefined) {
           throw new UnregisteredBackendError(protocolName, backendId, idsFor(backends));
         }

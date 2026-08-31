@@ -105,4 +105,31 @@ describe("normaliseCatalog", () => {
     ]);
     expect(catalog.model("deepseek", "deepseek-new")).toBeDefined();
   });
+
+  it("replaces an existing model when the override supplies the same id", () => {
+    // "deepseek-chat" already exists in the raw catalog; the override entry
+    // with the same id must win, not be appended alongside it.
+    const catalog = normaliseCatalog(RAW, [
+      {
+        provider: "deepseek",
+        models: [
+          {
+            id: "deepseek-chat",
+            provider: "deepseek",
+            protocol: "openai-completions",
+            pricing: { input: 3, output: 15, cacheRead: 0.1, cacheWrite: 0 },
+            contextWindow: 131072,
+            supportsTools: false,
+            thinkingLevels: ["off"],
+          },
+        ],
+      },
+    ]);
+    const model = catalog.model("deepseek", "deepseek-chat");
+    expect(model?.pricing.input).toBe(3);
+    expect(model?.pricing.output).toBe(15);
+    expect(model?.contextWindow).toBe(131072);
+    expect(model?.supportsTools).toBe(false);
+    expect(catalog.listModels()).toHaveLength(3);
+  });
 });

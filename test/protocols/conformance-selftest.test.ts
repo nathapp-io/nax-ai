@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { Protocol, ProtocolEvent, ProtocolRequest } from "../../src/protocols/types.ts";
-import { runProtocolConformance } from "../support/conformance.ts";
+import { runProtocolConformance, sequenceViolations } from "../support/conformance.ts";
 
 const TEXT_REQUEST: ProtocolRequest = {
   model: "fake-model",
@@ -37,7 +37,10 @@ describe("conformance suite self-test", () => {
     ]);
     const events: ProtocolEvent[] = [];
     for await (const event of bad.stream(TEXT_REQUEST)) events.push(event);
-    const doneIndex = events.findIndex((e) => e.type === "done");
-    expect(doneIndex).not.toBe(events.length - 1);
+    // The suite asserts on sequenceViolations, so the helper — not an inline
+    // re-implementation — must be what flags this stream.
+    expect(sequenceViolations(events).length).toBeGreaterThan(0);
+    expect(sequenceViolations(events)).not.toEqual([]);
+    expect(sequenceViolations(events)).toContain("usage must precede done");
   });
 });

@@ -21,6 +21,12 @@ describe("clampThinkingLevel", () => {
     expect(clampThinkingLevel("low", ["minimal", "medium"])).toBe("minimal");
   });
 
+  it("honours the lower-neighbour tie rule on unsorted input", () => {
+    // "low" is 3 ranks from neither "medium"(3) nor "minimal"(1); the sort
+    // guarantees "minimal" wins even though it is listed last.
+    expect(clampThinkingLevel("low", ["medium", "minimal"])).toBe("minimal");
+  });
+
   it("returns off when the model supports no thinking", () => {
     expect(clampThinkingLevel("high", [])).toBe("off");
   });

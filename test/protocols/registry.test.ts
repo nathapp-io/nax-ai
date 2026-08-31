@@ -82,4 +82,19 @@ describe("createRegistry", () => {
     );
     expect(() => registry.validate()).not.toThrow();
   });
+
+  it("validate() surfaces a default selection naming an unregistered backend", () => {
+    // A { default: "native" } selection against a pi-only registry must fail
+    // at startup, not on the first resolve().
+    const registry = createRegistry({ p: { pi: async () => stubProtocol("p") } }, { default: "native" });
+    expect(() => registry.validate()).toThrow(UnregisteredBackendError);
+  });
+
+  it("validate() passes for a satisfiable default selection", () => {
+    const registry = createRegistry(
+      { p: { pi: async () => stubProtocol("p"), native: async () => stubProtocol("p") } },
+      { default: "native" },
+    );
+    expect(() => registry.validate()).not.toThrow();
+  });
 });
