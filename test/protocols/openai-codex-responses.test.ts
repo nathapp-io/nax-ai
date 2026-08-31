@@ -111,6 +111,13 @@ describe("openai-codex-responses pi backend", () => {
     expect(request.instructions).toBe("be terse");
     expect(request.messages).toHaveLength(1);
   });
+
+  it("passes the requested thinking level to the adapter", async () => {
+    const capture: { request?: unknown } = {};
+    const protocol = createOpenAiCodexResponsesPi({ client: fakePi(TEXT_EVENTS, capture) });
+    await collect(protocol.stream({ ...TEXT_REQUEST, thinking: "high" }));
+    expect((capture.request as { thinking?: string }).thinking).toBe("high");
+  });
 });
 
 runProtocolConformance(

@@ -42,9 +42,20 @@ export interface Catalog {
 export function normaliseCatalog(raw: readonly RawProvider[], overrides: readonly ProviderOverride[] = []): Catalog {
   const overrideFor = new Map(overrides.map((o) => [o.provider, o]));
   const providers = new Map<string, ResolvedProvider>();
-  const models = new Map<string, ResolvedModel>();
+  // Keep provider and model identifiers in separate map levels. Both are
+  // externally supplied opaque strings, so a delimiter-based composite key
+  // would make otherwise distinct pairs such as ("a", "b/c") and
+  // ("a/b", "c") collide.
+  const models = new Map<string, Map<string, ResolvedModel>>();
 
-  const key = (provider: string, model: string): string => `${provider}/${model}`;
+  const setModel = (provider: string, model: ResolvedModel): void => {
+    let providerModels = models.get(provider);
+    if (providerModels === undefined) {
+      providerModels = new Map<string, ResolvedModel>();
+      models.set(provider, providerModels);
+    }
+    providerModels.set(model.id, model);
+  };
 
   for (const rawProvider of raw) {
     // The gate, on the real path. A prohibited flow must stop resolution here,
@@ -65,7 +76,7 @@ export function normaliseCatalog(raw: readonly RawProvider[], overrides: readonl
     });
 
     for (const rawModel of rawProvider.models) {
-      models.set(key(rawProvider.id, rawModel.id), {
+      setModel(rawProvider.id, {
         id: rawModel.id,
         provider: rawProvider.id,
         protocol: rawModel.protocol ?? rawProvider.defaultProtocol,
@@ -80,13 +91,16 @@ export function normaliseCatalog(raw: readonly RawProvider[], overrides: readonl
   // Override-supplied models are applied last so they can replace an entry.
   for (const override of overrides) {
     for (const model of override.models ?? []) {
-      models.set(key(override.provider, model.id), model);
+      setModel(override.provider, model);
     }
   }
 
   return {
     provider: (id) => providers.get(id),
-    model: (provider, model) => models.get(key(provider, model)),
-    listModels: (provider) => [...models.values()].filter((m) => provider === undefined || m.provider === provider),
+    model: (provider, model) => models.get(provider)?.get(model),
+    listModels: (provider) => {
+      if (provider !== undefined) return [...(models.get(provider)?.values() ?? [])];
+      return [...models.values()].flatMap((providerModels) => [...providerModels.values()]);
+    },
   };
 }

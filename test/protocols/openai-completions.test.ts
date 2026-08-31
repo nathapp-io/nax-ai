@@ -108,6 +108,13 @@ describe("openai-completions pi backend", () => {
     expect(request.system).toBeUndefined();
     expect(request.messages[0]).toMatchObject({ role: "system", content: "be terse" });
   });
+
+  it("passes the requested thinking level to the adapter", async () => {
+    const capture: { request?: unknown } = {};
+    const protocol = createOpenAiCompletionsPi({ client: fakePi(TEXT_EVENTS, capture) });
+    await collect(protocol.stream({ ...TEXT_REQUEST, thinking: "high" }));
+    expect((capture.request as { thinking?: string }).thinking).toBe("high");
+  });
 });
 
 runProtocolConformance(

@@ -44,6 +44,7 @@ export function createAnthropicMessagesPi(deps: PiDeps): Protocol {
         ...(req.tools !== undefined ? { tools: req.tools } : {}),
         ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {}),
         ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
+        ...(req.thinking !== undefined ? { thinking: req.thinking } : {}),
         ...(req.signal !== undefined ? { signal: req.signal } : {}),
       };
 

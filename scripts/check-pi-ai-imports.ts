@@ -15,7 +15,10 @@ import { join, relative } from "node:path";
 const ROOT = new URL("..", import.meta.url).pathname;
 const SCAN_DIR = join(ROOT, "src");
 
-const PI_IMPORT = /from\s+["']@earendil-works\/pi-ai|import\s*\(\s*["']@earendil-works\/pi-ai/;
+// Covers named/type imports, dynamic imports, and side-effect-only static
+// imports. The latter still couples a shared module to pi-ai and must remain
+// outside the adapter boundary.
+const PI_IMPORT = /(?:from\s+|import\s*(?:\(\s*)?)["']@earendil-works\/pi-ai/;
 const ALLOWED = [/^src\/protocols\/pi-client\.ts$/, /^src\/protocols\/[^/]+\/backend-pi\.ts$/];
 
 async function* walk(dir: string): AsyncGenerator<string> {

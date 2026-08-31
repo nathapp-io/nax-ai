@@ -132,4 +132,21 @@ describe("normaliseCatalog", () => {
     expect(model?.supportsTools).toBe(false);
     expect(catalog.listModels()).toHaveLength(3);
   });
+
+  it("keeps slash-containing provider and model ids distinct", () => {
+    const model = {
+      pricing: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1,
+      supportsTools: false,
+      thinkingLevels: [],
+    } as const;
+    const catalog = normaliseCatalog([
+      { ...DEEPSEEK, id: "a", models: [{ ...model, id: "b/c" }] },
+      { ...DEEPSEEK, id: "a/b", models: [{ ...model, id: "c" }] },
+    ]);
+
+    expect(catalog.model("a", "b/c")?.provider).toBe("a");
+    expect(catalog.model("a/b", "c")?.provider).toBe("a/b");
+    expect(catalog.listModels()).toHaveLength(2);
+  });
 });
