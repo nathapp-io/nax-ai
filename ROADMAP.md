@@ -1,6 +1,6 @@
 # nax-ai roadmap
 
-**Last updated:** 2026-08-31 · **Current milestone:** M1, in progress on `feat/protocol-architecture`
+**Last updated:** 2026-08-31 · **Current milestone:** M2 — real transport, not started. M1 merged to `main` in [#1](https://github.com/nathapp-io/nax-ai/pull/1) (`d3a3968`).
 
 This file records where the project is and what comes next. It is the entry point for anyone — human or agent — picking the work up cold.
 
@@ -24,16 +24,16 @@ The artifact is a point-in-time analysis and does not track progress — it is t
 | Milestone | State | Delivers | Can it call a provider? |
 |---|---|---|---|
 | **M0 — scaffold** | ✅ done | Package, toolchain, two working gates | no |
-| **M1 — protocol architecture** | 🚧 in progress | `Protocol`, registry, catalog, client, 4 protocol backends | **no** |
-| **M2 — real transport** | ⬜ not started | `createPiClient`, auth wiring, first real LLM call | yes |
+| **M1 — protocol architecture** | ✅ done | `Protocol`, registry, catalog, client, 4 protocol backends | **no** |
+| **M2 — real transport** | 🚧 next | `createPiClient`, auth wiring, first real LLM call | yes |
 | **M3 — recorded fixtures** | ⬜ not started | The suite that gates merges | yes |
 | **M4 — hardening** | ⬜ not started | Transport retry, `CredentialStore`, live canary | yes |
 
-### ⚠️ M1 produces a package that cannot make a network call
+### ⚠️ The package as it stands cannot make a network call
 
 This surprises people, so it is stated plainly. Every protocol backend takes an **injected** `PiClientPort`, and `createPiClient` is a stub that throws. That is deliberate: it makes all eleven tasks testable without network, credentials or spend.
 
-At the end of M1 the tests pass, the build emits declarations, and the tarball installs — and nothing talks to a provider. **M2 is where nax-ai becomes usable.** Do not publish `0.1.0` to `latest` before M2 lands.
+M1 has landed: the tests pass (144 across 12 files), the build emits declarations, and the tarball installs — and nothing talks to a provider. **M2 is where nax-ai becomes usable.** Do not publish `0.1.0` to `latest` before M2 lands.
 
 ## Milestones
 
@@ -44,13 +44,13 @@ Package skeleton, toolchain decisions, and two gates that fail on real violation
 - `src/auth/oauth-policy.ts` — OAuth allowlist. Anthropic is prohibited and the reason is recorded in the code.
 - `scripts/check-no-bun-apis.ts` — rejects `Bun.*` in `src/`, because the primary consumer runs on Bun and would never notice the breakage.
 
-### M1 — protocol architecture 🚧
+### M1 — protocol architecture ✅
 
 The seam that lets a wire protocol be replaced later without consumers noticing. Eleven tasks; see the plan.
 
-Ends when the plan's Definition of Done passes. Note that the definition covers *verification*, not *capability* — see the warning above.
+Merged in #1 (`d3a3968`), all eleven tasks complete and the plan's Definition of Done passing. Note that the definition covers *verification*, not *capability* — see the warning above.
 
-### M2 — real transport ⬜
+### M2 — real transport 🚧 next
 
 The critical path to a usable package, and the piece the M1 plan explicitly defers because it needs knowledge no document currently holds.
 
@@ -61,6 +61,28 @@ The critical path to a usable package, and the piece the M1 plan explicitly defe
 - Publish `0.1.0` under the **`next`** dist-tag, never `latest`, while the API is unstable.
 
 M2 needs its own spec section or a short design note before its plan: the event mapping is the risky part and should be designed against pi-ai's actual types, not sketched.
+
+#### Three mismatches already visible in pi-ai's types
+
+Found by reading `dist/types.d.ts` against `PiStreamEvent` (`src/protocols/anthropic-messages/backend-pi.ts:17`). Each one is a design decision the M2 note must make, not a detail the implementer can resolve while typing:
+
+1. **There is no usage event.** `AssistantMessageEvent` has thirteen kinds and none of them carry `Usage` — usage rides on `AssistantMessage.usage` (`types.d.ts:316`), reachable via every event's `partial` and via `done.message`. But `PiStreamEvent` has a discrete `usage` kind, and the conformance suite requires usage to *precede* `done`. The adapter must synthesise it, and the note must say from where.
+2. **Tool-call deltas have no id or name.** `toolcall_delta` carries only `contentIndex` and `delta`; the `ToolCall` with its id and name arrives at `toolcall_end`. `PiStreamEvent`'s `tool-partial` requires both up front, so they must be read out of `partial`'s content at that index — or the partial event's contract has to change.
+3. **`PiClientPort.stream(request: unknown)` is not pi-ai's call shape.** pi-ai takes `stream(model, context, options)` (`types.d.ts:192`); the backends build a single flat wire-request object. The translation belongs in `createPiClient`, which is also the reason the port's parameter is `unknown` today.
+
+#### Carried from M1's final review
+
+Rulings and follow-ups made during M1 that land in M2, recorded here because they otherwise live only in `.superpowers/sdd/2026-08-31-protocol-architecture/progress.md`:
+
+- Per-event-kind tests for the real `createPiClient`, and `classify()` branch tests per backend.
+- Extend the pi-ai import gate's ALLOWED list to cover `src/providers/catalog.ts` (deferred from Task 9 when the catalog moves onto pi-ai's bundled data).
+- Decide the export surface for protocol registration — `src/index.ts` exports no registration factories today.
+- Move `PiClientPort` ownership out of `anthropic-messages/backend-pi.ts` and into `pi-client.ts`, where the sole implementation will live.
+- Smoke the OAuth gate through `normaliseCatalog`.
+- The catalog key uses `/` as a separator; either constrain provider ids to exclude slashes or switch to nested maps.
+- `toolChoice` and `cacheRetention` have no wire mapping yet — plan-level gap, needs the real client.
+- Optional: the four `classify()` implementations are near-duplicates; the seam permits a shared interior helper.
+- Parked minor: the comment at `test/protocols/thinking.test.ts:25` misstates the rank distance ("low" is 1 rank from each neighbour, not 3). Comment-only; correct at first touch.
 
 ### M3 — recorded fixtures ⬜
 
