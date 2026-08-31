@@ -248,6 +248,8 @@ Two consequences for nax-ai:
 
 More consequentially, that an explicitly-passed `apiKey` takes precedence over `Models`' own resolution, rather than being ignored or causing a double resolution, is an assumption and not a finding. The plan carries it as a task that proves precedence against a live provider before the remaining auth wiring is built on it.
 
+**Verified 2026-08-31** by `scripts/probe-apikey-precedence.ts` against `deepseek`: an explicitly passed `apiKey` does take precedence over pi-ai's own resolution. The deliberately wrong key was rejected with `401` naming that key's own masked tail, while the real key authenticated and failed only on `402 Insufficient Balance` — a billing state of the zero-balance test account, not an auth outcome; with no explicit key, pi-ai's own resolution reaches the same `402`, so the two explicit keys provably took different paths. Task 9 therefore passes resolved auth explicitly.
+
 ## 8. Public surface
 
 Added:
