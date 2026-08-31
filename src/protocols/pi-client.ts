@@ -50,7 +50,7 @@ export type PiStreamFn = (
 ) => AsyncIterable<AssistantMessageEvent>;
 
 export interface PiDeps {
-  readonly resolveModel: (modelId: string) => Promise<Model<Api>>;
+  readonly resolveModel: (modelId: string, provider?: string) => Promise<Model<Api>>;
   readonly stream: PiStreamFn;
 }
 
@@ -188,7 +188,7 @@ export function createPiProtocol(name: string, deps: PiDeps): Protocol {
     name,
 
     async *stream(req: ProtocolRequest): AsyncIterable<ProtocolEvent> {
-      const model = await deps.resolveModel(req.model);
+      const model = await deps.resolveModel(req.model, req.provider);
       let observed: PiResponse | undefined;
       const events = deps.stream(model, toPiContext(req, model), toPiOptions(req), (response) => {
         observed = response;
@@ -306,9 +306,22 @@ export function createPiDeps(options: PiProtocolOptions = {}): PiDeps {
   const resolver = createPiAuthResolver(models);
 
   return {
-    resolveModel: async (modelId) => {
-      const found = models.getModels().find((candidate) => candidate.id === modelId);
-      if (found === undefined) throw new Error(`Unknown model "${modelId}" in the pi-ai catalog.`);
+    resolveModel: async (modelId, provider) => {
+      // pi-ai serves one model id from many providers (e.g. gpt-5.4 under
+      // azure-openai-responses, openai and openai-codex), so when the client
+      // supplies the owning provider the search is scoped to it. Without a
+      // provider — protocol-direct callers and existing tests — the global
+      // catalog's first match stays as the documented fallback.
+      const found =
+        provider !== undefined
+          ? models.getModels(provider).find((candidate) => candidate.id === modelId)
+          : models.getModels().find((candidate) => candidate.id === modelId);
+      if (found === undefined) {
+        if (provider !== undefined) {
+          throw new Error(`Unknown model "${modelId}" for provider "${provider}" in the pi-ai catalog.`);
+        }
+        throw new Error(`Unknown model "${modelId}" in the pi-ai catalog.`);
+      }
       return found;
     },
 

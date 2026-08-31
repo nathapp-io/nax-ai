@@ -22,10 +22,15 @@ export const MODEL: Model<Api> = {
 // biome-ignore lint/suspicious/noExportsInTest: Task 6's conformance suite imports this helper from this file.
 export function fakePi(events: AssistantMessageEvent[]) {
   const calls: { model: Model<Api>; context: Context; options: SimpleStreamOptions }[] = [];
+  const resolveCalls: { modelId: string; provider: string | undefined }[] = [];
   return {
     calls,
+    resolveCalls,
     deps: {
-      resolveModel: async () => MODEL,
+      resolveModel: async (modelId: string, provider?: string) => {
+        resolveCalls.push({ modelId, provider });
+        return MODEL;
+      },
       stream: (model: Model<Api>, context: Context, options: SimpleStreamOptions, _onResponse?: unknown) => {
         calls.push({ model, context, options });
         return (async function* () {
@@ -151,6 +156,15 @@ describe("createPiProtocol", () => {
     expect(pi.calls).toHaveLength(1);
     expect(pi.calls[0]?.model.id).toBe("deepseek-chat");
     expect(pi.calls[0]?.context.systemPrompt).toBe("be terse");
+  });
+
+  it("forwards the request's provider to model resolution", async () => {
+    const pi = fakePi([]);
+    const protocol = createPiProtocol("openai-completions", pi.deps);
+    for await (const _ of protocol.stream({ ...BASE, provider: "openai-codex" })) {
+      // drain
+    }
+    expect(pi.resolveCalls).toEqual([{ modelId: "deepseek-chat", provider: "openai-codex" }]);
   });
 });
 
