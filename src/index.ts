@@ -50,6 +50,7 @@ export type {
   ToolDefinition,
 } from "./protocols/types.ts";
 export { type Catalog, normaliseCatalog, type RawModel, type RawProvider } from "./providers/catalog.ts";
+export { piProviders } from "./providers/pi-catalog.ts";
 export type {
   Pricing,
   PricingRates,
