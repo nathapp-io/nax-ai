@@ -16,14 +16,17 @@ import type {
   AssistantMessageEvent,
   Context,
   Model,
+  MutableModels,
   Message as PiMessage,
   Tool as PiTool,
   Usage as PiUsage,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
+import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { StopReason } from "../types.ts";
 import { toTokenUsage, totalTokens } from "../usage.ts";
 import { classifyHttpError, parseRetryAfter } from "./errors.ts";
+import type { PiProtocolOptions } from "./pi-protocols.ts";
 import { createToolArgAccumulator, parseToolArgs } from "./tool-args.ts";
 import type { ConversationMessage, Protocol, ProtocolEvent, ProtocolRequest } from "./types.ts";
 
@@ -279,14 +282,31 @@ export function createPiProtocol(name: string, deps: PiDeps): Protocol {
   };
 }
 
+let shared: MutableModels | undefined;
+
 /**
- * Temporary legacy stub. The four protocol index.ts files still import
- * createPiClient; without it they fail typecheck. Task 6 deletes those four
- * directories and this export in the same commit. Behaviour is unchanged from
- * the stub it sat beside: resolving a pi backend throws.
+ * One Models instance is shared across the four protocols, so they share one
+ * credential store and one catalog.
+ *
+ * Credentials are deliberately NOT forwarded yet. nax-ai's CredentialStore is
+ * not pi-ai's shape, and passing it through unadapted would fail at runtime
+ * rather than at the type level. Task 9 adds the adapter and the parameter.
  */
-export async function createPiClient(_protocolName: string): Promise<never> {
-  throw new Error(
-    "createPiClient is not implemented yet — see Task 6 notes. Backends are testable via injection in the meantime.",
-  );
+export function createPiDeps(_options: PiProtocolOptions = {}): PiDeps {
+  if (shared === undefined) shared = builtinModels();
+  const models = shared;
+
+  return {
+    resolveModel: async (modelId) => {
+      const found = models.getModels().find((candidate) => candidate.id === modelId);
+      if (found === undefined) throw new Error(`Unknown model "${modelId}" in the pi-ai catalog.`);
+      return found;
+    },
+
+    stream: (model, context, options_, onResponse) =>
+      models.streamSimple(model, context, {
+        ...options_,
+        onResponse: (response) => onResponse({ status: response.status, headers: response.headers }),
+      }),
+  };
 }

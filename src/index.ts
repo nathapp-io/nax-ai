@@ -22,6 +22,12 @@ export {
 export { type Client, type ClientOptions, type ClientRequest, createClient } from "./client.ts";
 export { collectStream, ProtocolStreamError } from "./protocols/collect.ts";
 export {
+  PI_PROTOCOL_NAMES,
+  type PiProtocolName,
+  type PiProtocolOptions,
+  piProtocols,
+} from "./protocols/pi-protocols.ts";
+export {
   type BackendId,
   type BackendSelection,
   createRegistry,

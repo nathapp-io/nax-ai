@@ -2,6 +2,7 @@ import type { Api, AssistantMessageEvent, Context, Model, SimpleStreamOptions } 
 import { describe, expect, it } from "vitest";
 import { createPiProtocol, toPiContext, toPiOptions } from "../../src/protocols/pi-client.ts";
 import type { ProtocolEvent, ProtocolRequest } from "../../src/protocols/types.ts";
+import { runProtocolConformance } from "../support/conformance.ts";
 
 // biome-ignore lint/suspicious/noExportsInTest: Task 6's conformance suite imports these helpers from this file.
 export const MODEL: Model<Api> = {
@@ -410,3 +411,16 @@ describe("createPiProtocol error path", () => {
     expect(events.some((e) => e.type === "done")).toBe(false);
   });
 });
+
+runProtocolConformance(
+  "pi",
+  async () =>
+    createPiProtocol(
+      "openai-completions",
+      fakePi([
+        { type: "text_delta", contentIndex: 0, delta: "hello", partial: message() },
+        { type: "done", reason: "stop", message: message() },
+      ] as AssistantMessageEvent[]).deps,
+    ),
+  { text: { name: "text", request: BASE } },
+);
