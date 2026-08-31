@@ -2440,6 +2440,8 @@ These are in the spec but deliberately out of this plan's scope. Each needs its 
 | Recorded-fixture tests from live captures | §9 | Needs the real pi-client to capture from. |
 | Scheduled live-provider canary | §10.3 | Needs repository secrets and a spend cap — an infrastructure decision, not code. |
 | `CredentialStore` wiring | §5 | Accepted by `ClientOptions` and currently unused; belongs with the real pi-client. |
+| `toolChoice` wire mapping per protocol | §3 | Accepted by `ProtocolRequest` but no backend maps it to its wire format yet (`toolChoice: "none"` would silently not prevent tool calls). Wire mapping needs the real pi-client's request shape (M2) to verify against. |
+| `cacheRetention` wire mapping per protocol | §3 | Accepted by `ProtocolRequest` but no backend maps it to its wire format yet (Anthropic `cache_control` is never set). Wire mapping needs the real pi-client's request shape (M2) to verify against. |
 
 ## Definition of done
 
