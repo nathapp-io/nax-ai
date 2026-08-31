@@ -1,6 +1,6 @@
 # nax-ai roadmap
 
-**Last updated:** 2026-08-31 · **Current milestone:** M2 — real transport, not started. M1 merged to `main` in [#1](https://github.com/nathapp-io/nax-ai/pull/1) (`d3a3968`).
+**Last updated:** 2026-08-31 · **Current milestone:** M3 — recorded fixtures. M2 — real transport is complete. M1 merged to `main` in [#1](https://github.com/nathapp-io/nax-ai/pull/1) (`d3a3968`).
 
 This file records where the project is and what comes next. It is the entry point for anyone — human or agent — picking the work up cold.
 
@@ -26,15 +26,9 @@ The artifact is a point-in-time analysis and does not track progress — it is t
 |---|---|---|---|
 | **M0 — scaffold** | ✅ done | Package, toolchain, two working gates | no |
 | **M1 — protocol architecture** | ✅ done | `Protocol`, registry, catalog, client, 4 protocol backends | **no** |
-| **M2 — real transport** | 🚧 next | `createPiClient`, auth wiring, first real LLM call | yes |
-| **M3 — recorded fixtures** | ⬜ not started | The suite that gates merges | yes |
+| **M2 — real transport** | ✅ done | `createPiClient`, auth wiring, first real LLM call | yes |
+| **M3 — recorded fixtures** | 🚧 next | The suite that gates merges | yes |
 | **M4 — hardening** | ⬜ not started | Transport retry, `CredentialStore`, live canary | yes |
-
-### ⚠️ The package as it stands cannot make a network call
-
-This surprises people, so it is stated plainly. Every protocol backend takes an **injected** `PiClientPort`, and `createPiClient` is a stub that throws. That is deliberate: it makes all eleven tasks testable without network, credentials or spend.
-
-M1 has landed: the tests pass (144 across 12 files), the build emits declarations, and the tarball installs — and nothing talks to a provider. **M2 is where nax-ai becomes usable.** Do not publish `0.1.0` to `latest` before M2 lands.
 
 ## Milestones
 
@@ -51,7 +45,7 @@ The seam that lets a wire protocol be replaced later without consumers noticing.
 
 Merged in #1 (`d3a3968`), all eleven tasks complete and the plan's Definition of Done passing. Note that the definition covers *verification*, not *capability* — see the warning above.
 
-### M2 — real transport 🚧 next
+### M2 — real transport ✅
 
 The critical path to a usable package, and the piece the M1 plan explicitly defers because it needs knowledge no document currently holds.
 
@@ -61,7 +55,7 @@ The critical path to a usable package, and the piece the M1 plan explicitly defe
 - First real completion against a cheap provider (`deepseek`, `groq`).
 - Publish `0.1.0` under the **`next`** dist-tag, never `latest`, while the API is unstable.
 
-**M2 is planned and ready to execute: [`docs/superpowers/plans/2026-08-31-nax-ai-m2-real-transport.md`](docs/superpowers/plans/2026-08-31-nax-ai-m2-real-transport.md), 11 tasks in dependency order. Task 8 is a live probe that blocks Task 9 and needs a `DEEPSEEK_API_KEY`; Task 11 needs an existing Codex OAuth credential, since M2 does not implement login.**
+**Executed via [`docs/superpowers/plans/2026-08-31-nax-ai-m2-real-transport.md`](docs/superpowers/plans/2026-08-31-nax-ai-m2-real-transport.md), 11 tasks in dependency order — all complete. The live probe used a `DEEPSEEK_API_KEY`; the Codex OAuth check used a pre-existing pi credential, since M2 does not implement login.**
 
 **M2's design is written and approved: [`docs/superpowers/specs/2026-08-31-nax-ai-m2-real-transport-design.md`](docs/superpowers/specs/2026-08-31-nax-ai-m2-real-transport-design.md).** It was designed against pi-ai's actual types rather than sketched, and it supersedes the three mismatches listed below with a fuller set.
 
@@ -87,7 +81,7 @@ Rulings and follow-ups made during M1 that land in M2, recorded here because the
 - Optional: the four `classify()` implementations are near-duplicates; the seam permits a shared interior helper.
 - Parked minor: the comment at `test/protocols/thinking.test.ts:25` misstates the rank distance ("low" is 1 rank from each neighbour, not 3). Comment-only; correct at first touch.
 
-### M3 — recorded fixtures ⬜
+### M3 — recorded fixtures 🚧 next
 
 Capture real provider responses during M2 and turn them into the fixture suite that gates merges. Until this exists, protocol correctness rests on scripted events that assert the mapping is *self-consistent* rather than *right*.
 

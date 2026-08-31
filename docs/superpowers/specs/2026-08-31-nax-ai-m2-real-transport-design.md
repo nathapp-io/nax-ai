@@ -314,13 +314,13 @@ Until M3, correctness rests on scripted events plus one recorded live run. That 
 
 ## 11. Definition of done
 
-1. `lint`, `typecheck`, `test`, `build` green, with the pi-ai import gate extended as section 9 describes.
-2. A real completion against a cheap provider returns text and non-zero usage.
-3. A real tool call round-trips end to end.
-4. A Codex OAuth request succeeds given a pre-existing credential.
-5. Explicit `apiKey` precedence over `Models`' own resolution proven live (section 7.2).
-6. `0.1.0` published under the `next` dist-tag. Never `latest`.
-7. ROADMAP position updated in the same commit as the work.
+1. [x] `lint`, `typecheck`, `test`, `build` green, with the pi-ai import gate extended as section 9 describes.
+2. [x] A real completion against a cheap provider returns text and non-zero usage.
+3. [x] A real tool call round-trips end to end.
+4. [x] A Codex OAuth request succeeds given a pre-existing credential.
+5. [x] Explicit `apiKey` precedence over `Models`' own resolution proven live (section 7.2).
+6. [ ] `0.1.0` published under the `next` dist-tag. Never `latest`. — pending explicit consent; not run yet.
+7. [x] ROADMAP position updated in the same commit as the work.
 
 ## 12. Out of scope
 
