@@ -276,11 +276,13 @@ const client = createClient({
 ## 9. Folder structure
 
 ```
-src/protocols/pi-client.ts     createPiProtocol; owns pi-ai; one shared Models
-src/protocols/tool-args.ts     accumulateToolArgs
-src/protocols/errors.ts        classifyHttpError
+src/protocols/pi-client.ts     createPiProtocol, createPiDeps; owns pi-ai
+src/protocols/pi-protocols.ts  piProtocols; four registry keys, one Models
+src/protocols/tool-args.ts     createToolArgAccumulator, parseToolArgs
+src/protocols/errors.ts        classifyHttpError, parseRetryAfter
 src/providers/pi-catalog.ts    piProviders
-src/auth/resolver.ts           AuthResolver, credential store adapter
+src/auth/resolver.ts           AuthResolver, ResolvedAuth (no pi-ai import)
+src/auth/pi-auth.ts            credential store adapter, pi AuthResolver
 src/protocols/registry.ts      unchanged
 src/usage.ts                   unchanged
 
@@ -288,7 +290,9 @@ deleted: src/protocols/{anthropic-messages,openai-completions,
          openai-responses,openai-codex-responses}/
 ```
 
-`scripts/check-pi-ai-imports.ts` gains `pi-client.ts`, its test, and `pi-catalog.ts` on its ALLOWED list. The test is on that list deliberately: it feeds scripted pi-ai events, which is what makes it test what ships.
+`scripts/check-pi-ai-imports.ts`'s ALLOWED list becomes exactly `pi-client.ts`, `pi-catalog.ts` and `pi-auth.ts`. The gate scans `src/` only, so the test that feeds scripted pi-ai events needs no allowance — which is what lets it test what ships.
+
+The auth split is driven by that gate: `resolver.ts` holds the port with no pi-ai import, so a native backend can depend on it; `pi-auth.ts` holds the adapter that does import pi-ai.
 
 ## 10. Testing
 
