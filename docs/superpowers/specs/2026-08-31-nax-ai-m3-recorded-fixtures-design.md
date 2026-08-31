@@ -52,6 +52,24 @@ a shape as evidence of a behaviour.
 Closing it properly needs a first-party Anthropic API key (billing, not subscription OAuth,
 which is prohibited — see the OAuth policy). That is a follow-up, not M3.
 
+## Credentials
+
+`createPiDeps({})` passes pi no credential store, so pi resolves from ambient environment
+variables only. That is enough for an api-key provider whose variable the operator exports,
+and **not** enough for `openai-codex`, whose OAuth credential lives in `~/.pi/agent/auth.json`
+and which no environment variable can carry. nax-ai ships no `CredentialStore` implementation
+— it is a bare port — so the live suite supplies a read-only one that reads pi's own file.
+
+That store refuses `modify` and `delete` rather than no-oping them. pi runs OAuth refresh
+inside `modify`, and silently discarding a rotated refresh token can invalidate the operator's
+pi login rather than merely failing the run. Failing loudly says: refresh through pi first.
+
+Note that nax-ai's `StoredCredential` oauth variant is a closed three-field shape while pi's
+carries an index signature for provider extras such as `accountId`. Those extras are dropped
+in translation. For `openai-codex` that is harmless — pi re-derives the account id from the
+access token's JWT claim rather than reading the stored field — but it is a latent limitation
+for any future provider that needs a stored extra.
+
 ## Redaction
 
 Fixtures are committed to a public repository. Recorded response headers are filtered to an

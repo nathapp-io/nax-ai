@@ -434,7 +434,157 @@ git commit -m "test: record at the deps seam instead of the mapper output"
 
 ---
 
-### Task 4: Live recording run (operator-run)
+### Task 4: Credential store for recording
+
+**Files:**
+- Create: `test/live/support/pi-auth-store.ts`
+- Test: `test/live/support/pi-auth-store.test.ts` (runs in the DEFAULT suite against a temp file, no real credentials)
+
+**Interfaces:**
+- Consumes: `CredentialStore`, `StoredCredential` from `src/types.ts`.
+- Produces: `piAuthStore(path?: string): CredentialStore`.
+
+**Why this task exists.** `createPiDeps({})` passes no credential store, so pi falls back to **ambient environment variables only**. The `openai-codex` credential is OAuth and lives in `~/.pi/agent/auth.json`; no environment variable can carry it, so without a store that fixture cannot be recorded at all. nax-ai ships no `CredentialStore` implementation — it is a bare port — so the live suite must supply one.
+
+The agent never handles a secret: the store reads the file at run time and hands pi an opaque value.
+
+**Two rulings, both about not damaging the operator's real credential file:**
+
+- `modify` and `delete` **throw**. pi runs OAuth refresh inside `modify`, and a silent no-op would drop a rotated refresh token on the floor — which can invalidate the operator's pi CLI login, not just this run. Failing loudly tells them to refresh through pi first.
+- The `key` is opaque. Never log, compare, or inspect it. pi's stored format also permits `"$VAR"` templates and `"!command"` values; this store passes them through verbatim rather than resolving them, because executing a command out of a credential file is not something a test should do.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { piAuthStore } from "./pi-auth-store.ts";
+
+function fixtureFile(contents: unknown): string {
+  const dir = mkdtempSync(join(tmpdir(), "nax-ai-auth-"));
+  const file = join(dir, "auth.json");
+  writeFileSync(file, JSON.stringify(contents), "utf8");
+  return file;
+}
+
+describe("piAuthStore", () => {
+  it("maps pi's api_key entry onto the api-key credential", async () => {
+    const store = piAuthStore(fixtureFile({ "opencode-go": { type: "api_key", key: "literal-value" } }));
+    expect(await store.read("opencode-go")).toEqual({ kind: "api-key", key: "literal-value" });
+  });
+
+  it("maps pi's oauth entry onto the oauth credential", async () => {
+    const store = piAuthStore(
+      fixtureFile({ "openai-codex": { type: "oauth", access: "a", refresh: "r", expires: 123, accountId: "acc" } }),
+    );
+    expect(await store.read("openai-codex")).toEqual({ kind: "oauth", access: "a", refresh: "r", expires: 123 });
+  });
+
+  it("returns undefined for a provider with no stored credential", async () => {
+    const store = piAuthStore(fixtureFile({}));
+    expect(await store.read("nobody")).toBeUndefined();
+  });
+
+  it("refuses to write, so a rotated token is never silently lost", async () => {
+    const store = piAuthStore(fixtureFile({}));
+    await expect(store.modify("x", async () => undefined)).rejects.toThrow(/read-only/);
+    await expect(store.delete("x")).rejects.toThrow(/read-only/);
+  });
+});
+```
+
+- [ ] **Step 2: Run it and watch it fail**
+
+Run: `bun x vitest --run test/live/support/pi-auth-store.test.ts`
+Expected: FAIL — cannot find module `./pi-auth-store.ts`.
+
+- [ ] **Step 3: Write the store**
+
+```ts
+// test/live/support/pi-auth-store.ts
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import type { CredentialStore, StoredCredential } from "../../../src/types.ts";
+
+const DEFAULT_PATH = join(homedir(), ".pi", "agent", "auth.json");
+
+/** pi's on-disk shape. `type` is snake_case there and kebab-case in nax-ai. */
+interface PiEntry {
+  readonly type?: string;
+  readonly key?: string;
+  readonly access?: string;
+  readonly refresh?: string;
+  readonly expires?: number;
+  readonly env?: Readonly<Record<string, string>>;
+}
+
+function toStored(entry: PiEntry | undefined): StoredCredential | undefined {
+  if (entry === undefined) return undefined;
+  if (entry.type === "api_key" && typeof entry.key === "string") {
+    return { kind: "api-key", key: entry.key, ...(entry.env !== undefined ? { env: entry.env } : {}) };
+  }
+  if (
+    entry.type === "oauth" &&
+    typeof entry.access === "string" &&
+    typeof entry.refresh === "string" &&
+    typeof entry.expires === "number"
+  ) {
+    // pi carries provider extras such as accountId alongside these three. They
+    // are dropped because nax-ai's StoredCredential does not model them, which
+    // is safe for openai-codex specifically: pi re-derives the account id from
+    // the access token's JWT claim rather than reading the stored field.
+    return { kind: "oauth", access: entry.access, refresh: entry.refresh, expires: entry.expires };
+  }
+  return undefined;
+}
+
+/**
+ * Reads pi's own credential file so the live suite can record against
+ * providers the operator has already authenticated, including OAuth ones no
+ * environment variable can carry.
+ */
+export function piAuthStore(path: string = DEFAULT_PATH): CredentialStore {
+  const readAll = (): Record<string, PiEntry> => {
+    try {
+      return JSON.parse(readFileSync(path, "utf8")) as Record<string, PiEntry>;
+    } catch {
+      return {};
+    }
+  };
+
+  const refuse = (): never => {
+    throw new Error(
+      "piAuthStore is read-only: pi runs OAuth refresh inside modify(), and writing back from a test could drop a rotated refresh token and break the operator's pi login. Refresh through pi's own CLI first, then re-run.",
+    );
+  };
+
+  return {
+    read: async (providerId) => toStored(readAll()[providerId]),
+    modify: async () => refuse(),
+    delete: async () => refuse(),
+  };
+}
+```
+
+- [ ] **Step 4: Run the tests**
+
+Run: `bun x vitest --run test/live/support/pi-auth-store.test.ts`
+Expected: PASS, 4 tests.
+
+- [ ] **Step 5: Run all gates and commit**
+
+```bash
+bun run lint && bun run typecheck && bun run test && bun run build
+git add test/live/support/pi-auth-store.ts test/live/support/pi-auth-store.test.ts
+git commit -m "test: read pi's credential file so live recording can reach oauth providers"
+```
+
+---
+
+### Task 5: Live recording run (operator-run)
 
 **Files:**
 - Modify: `test/live/complete.live.test.ts` (rewrite to drive recording through `recordingDeps`)
@@ -442,9 +592,11 @@ git commit -m "test: record at the deps seam instead of the mapper output"
 
 **Interfaces:**
 - Consumes: `recordingDeps` from Task 3.
-- Produces: the committed fixture files that Task 5 asserts against.
+- Produces: the committed fixture files that Task 6 asserts against.
 
 **This task needs provider credentials and spends money. An agent should prepare the code and stop; a human runs the recording.**
+
+Credentials come from `piAuthStore()` (Task 4), which reads `~/.pi/agent/auth.json`. Nothing is passed on the command line and no key is ever printed. Before running, confirm the operator has authenticated the providers through pi's own CLI — `opencode-go` (api key) and `openai-codex` (OAuth). If the Codex token has expired, refresh it through pi first: this store deliberately refuses to write, so pi cannot rotate it from inside the recording run.
 
 - [ ] **Step 1: Rewrite the live test to record at the seam**
 
@@ -452,6 +604,7 @@ git commit -m "test: record at the deps seam instead of the mapper output"
 import { describe, expect, it } from "vitest";
 import { createPiDeps, createPiProtocol } from "../../src/protocols/pi-client.ts";
 import type { ProtocolEvent, ProtocolRequest } from "../../src/protocols/types.ts";
+import { piAuthStore } from "./support/pi-auth-store.ts";
 import { recordingDeps } from "./support/record.ts";
 
 interface Target {
@@ -534,7 +687,7 @@ const TARGETS: readonly Target[] = [
 describe("record fixtures from live providers", () => {
   for (const t of TARGETS) {
     it(`records ${t.fixture}`, async () => {
-      const rec = recordingDeps(createPiDeps({}), {
+      const rec = recordingDeps(createPiDeps({ credentials: piAuthStore() }), {
         provider: t.provider,
         protocol: t.protocol,
         model: t.model,
@@ -589,7 +742,7 @@ git commit -m "test: record fixtures for all four protocols"
 
 ---
 
-### Task 5: Replay suite
+### Task 6: Replay suite
 
 **Files:**
 - Create: `test/protocols/replay.test.ts`
@@ -651,7 +804,7 @@ describe("recorded fixtures", () => {
 - [ ] **Step 2: Run it**
 
 Run: `bun x vitest --run test/protocols/replay.test.ts`
-Expected: PASS. If the per-protocol assertion fails, a fixture from Task 4 is missing — record it rather than weakening the assertion.
+Expected: PASS. If the per-protocol assertion fails, a fixture from Task 5 is missing — record it rather than weakening the assertion.
 
 - [ ] **Step 3: Run all gates and commit**
 
@@ -663,7 +816,7 @@ git commit -m "test: replay every recorded fixture against the sequence contract
 
 ---
 
-### Task 6: Error-path fixture
+### Task 7: Error-path fixture
 
 **Files:**
 - Create: `test/fixtures/recorded/error-rate-limit.json` (hand-written if no live 429 can be provoked — and labelled as such)
@@ -749,7 +902,7 @@ git commit -m "test: cover the error path through a recorded 429"
 
 ---
 
-### Task 7: Close M3 on the roadmap
+### Task 8: Close M3 on the roadmap
 
 **Files:**
 - Modify: `ROADMAP.md`
@@ -774,7 +927,7 @@ git commit -m "docs: M3 complete, with its remaining evidence gaps named"
 ## Notes for the executor
 
 - `sequenceViolations` treats "a text request must produce text" as a universal
-  invariant, which it is not — see the excusal in Task 5. Narrowing that helper to
+  invariant, which it is not — see the excusal in Task 6. Narrowing that helper to
   take the case shape would be a tidier fix, but it changes a file the conformance
   suite depends on, so it belongs in its own change rather than inside M3.
 
