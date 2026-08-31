@@ -22,14 +22,27 @@ import type {
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import type { StopReason } from "../types.ts";
-import { toTokenUsage } from "../usage.ts";
+import { toTokenUsage, totalTokens } from "../usage.ts";
+import { classifyHttpError, parseRetryAfter } from "./errors.ts";
 import { createToolArgAccumulator, parseToolArgs } from "./tool-args.ts";
 import type { ConversationMessage, Protocol, ProtocolEvent, ProtocolRequest } from "./types.ts";
+
+export interface PiResponse {
+  readonly status: number;
+  readonly headers: Readonly<Record<string, string>>;
+}
 
 export type PiStreamFn = (
   model: Model<Api>,
   context: Context,
   options: SimpleStreamOptions,
+  /**
+   * Called once, before the body is consumed. pi-ai's error event carries no
+   * status and no retry-after, so without this the classifier would return
+   * "unknown" for every failure and the consumer's retry policy — which M1
+   * section 10.1 deliberately assigns to the consumer — would be blind.
+   */
+  onResponse: (response: PiResponse) => void,
 ) => AsyncIterable<AssistantMessageEvent>;
 
 export interface PiDeps {
@@ -172,7 +185,10 @@ export function createPiProtocol(name: string, deps: PiDeps): Protocol {
 
     async *stream(req: ProtocolRequest): AsyncIterable<ProtocolEvent> {
       const model = await deps.resolveModel(req.model);
-      const events = deps.stream(model, toPiContext(req, model), toPiOptions(req));
+      let observed: PiResponse | undefined;
+      const events = deps.stream(model, toPiContext(req, model), toPiOptions(req), (response) => {
+        observed = response;
+      });
       const toolArgs = createToolArgAccumulator();
 
       for await (const event of events) {
@@ -234,11 +250,28 @@ export function createPiProtocol(name: string, deps: PiDeps): Protocol {
             return;
           }
 
+          case "error": {
+            const status = observed?.status;
+            const retryAfter = parseRetryAfter(observed?.headers);
+            const usage = toTokenUsage(event.error.usage);
+            // A failed request that consumed tokens still bills for them.
+            if (totalTokens(usage) > 0) yield { type: "usage", usage };
+            yield {
+              type: "error",
+              error: {
+                kind: classifyHttpError(status),
+                message: event.error.errorMessage ?? `Upstream stream ended: ${event.reason}.`,
+                ...(status !== undefined ? { status } : {}),
+                ...(retryAfter !== undefined ? { retryAfter } : {}),
+              },
+            };
+            return;
+          }
+
           default:
             // start, text_start, text_end, thinking_start, thinking_end and
             // toolcall_start carry nothing our vocabulary expresses: content
-            // is already delivered by the deltas. "error" is handled in the
-            // next task.
+            // is already delivered by the deltas.
             break;
         }
       }

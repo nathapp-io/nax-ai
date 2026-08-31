@@ -25,7 +25,7 @@ export function fakePi(events: AssistantMessageEvent[]) {
     calls,
     deps: {
       resolveModel: async () => MODEL,
-      stream: (model: Model<Api>, context: Context, options: SimpleStreamOptions) => {
+      stream: (model: Model<Api>, context: Context, options: SimpleStreamOptions, _onResponse?: unknown) => {
         calls.push({ model, context, options });
         return (async function* () {
           for (const event of events) yield event;
@@ -292,5 +292,121 @@ describe("createPiProtocol event mapping", () => {
 
     expect(events[0]).toEqual({ type: "text-delta", text: "reading" });
     expect(events.at(-1)).toMatchObject({ type: "error", error: { kind: "bad-request" } });
+  });
+});
+
+/** Replays scripted events after reporting an HTTP response, as pi-ai does. */
+function fakePiWithResponse(
+  events: AssistantMessageEvent[],
+  response?: { status: number; headers: Record<string, string> },
+) {
+  return {
+    resolveModel: async () => MODEL,
+    stream: (
+      _model: Model<Api>,
+      _context: Context,
+      _options: SimpleStreamOptions,
+      onResponse: (r: { status: number; headers: Record<string, string> }) => void,
+    ) => {
+      if (response) onResponse(response);
+      return (async function* () {
+        for (const event of events) yield event;
+      })();
+    },
+  };
+}
+
+async function drainWith(deps: ReturnType<typeof fakePiWithResponse>) {
+  const out: ProtocolEvent[] = [];
+  for await (const event of createPiProtocol("openai-completions", deps).stream(BASE)) out.push(event);
+  return out;
+}
+
+describe("createPiProtocol error path", () => {
+  it("classifies the error from the observed HTTP status, not the event", async () => {
+    const events = await drainWith(
+      fakePiWithResponse(
+        [
+          { type: "error", reason: "error", error: message({ stopReason: "error", errorMessage: "slow down" }) },
+        ] as AssistantMessageEvent[],
+        { status: 429, headers: { "retry-after": "30" } },
+      ),
+    );
+
+    expect(events.at(-1)).toEqual({
+      type: "error",
+      error: { kind: "rate-limit", message: "slow down", status: 429, retryAfter: 30 },
+    });
+  });
+
+  it("falls back to unknown when no response was observed", async () => {
+    const events = await drainWith(
+      fakePiWithResponse([
+        { type: "error", reason: "error", error: message({ stopReason: "error", errorMessage: "socket hang up" }) },
+      ] as AssistantMessageEvent[]),
+    );
+
+    expect(events.at(-1)).toMatchObject({ type: "error", error: { kind: "unknown", message: "socket hang up" } });
+    expect(events.at(-1)).not.toHaveProperty("error.status");
+  });
+
+  it("emits usage before the error, because a failed call still billed", async () => {
+    const events = await drainWith(
+      fakePiWithResponse(
+        [
+          { type: "text_delta", contentIndex: 0, delta: "part", partial: message() },
+          { type: "error", reason: "error", error: message({ stopReason: "error", errorMessage: "boom" }) },
+        ] as AssistantMessageEvent[],
+        { status: 500, headers: {} },
+      ),
+    );
+
+    expect(events.map((e) => e.type)).toEqual(["text-delta", "usage", "error"]);
+  });
+
+  it("omits usage when the failed message reported none", async () => {
+    const zero = {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    };
+    const events = await drainWith(
+      fakePiWithResponse(
+        [
+          { type: "error", reason: "error", error: message({ usage: zero, errorMessage: "boom" }) },
+        ] as AssistantMessageEvent[],
+        { status: 400, headers: {} },
+      ),
+    );
+
+    expect(events.map((e) => e.type)).toEqual(["error"]);
+  });
+
+  it("emits nothing after an error", async () => {
+    const events = await drainWith(
+      fakePiWithResponse(
+        [
+          { type: "error", reason: "error", error: message({ errorMessage: "boom" }) },
+          { type: "text_delta", contentIndex: 0, delta: "should not appear", partial: message() },
+        ] as AssistantMessageEvent[],
+        { status: 500, headers: {} },
+      ),
+    );
+
+    expect(events.filter((e) => e.type === "text-delta")).toEqual([]);
+  });
+
+  it("reports an aborted stream as an error rather than a clean stop", async () => {
+    const events = await drainWith(
+      fakePiWithResponse([
+        { type: "error", reason: "aborted", error: message({ stopReason: "aborted", errorMessage: "aborted" }) },
+      ] as AssistantMessageEvent[]),
+    );
+
+    expect(events.at(-1)).toMatchObject({ type: "error" });
+    expect(events.some((e) => e.type === "done")).toBe(false);
   });
 });
