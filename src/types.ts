@@ -68,6 +68,11 @@ export interface CompleteResult {
  */
 export interface CredentialStore {
   read(providerId: ProviderId): Promise<StoredCredential | undefined>;
+  /**
+   * Returning `undefined` from `fn` removes the credential, and the pi adapter
+   * accordingly maps pi's leave-unchanged `undefined` (its no-op refresh) to
+   * the current credential.
+   */
   modify(
     providerId: ProviderId,
     fn: (current: StoredCredential | undefined) => Promise<StoredCredential | undefined>,

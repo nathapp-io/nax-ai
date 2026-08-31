@@ -64,10 +64,31 @@ describe("toPiCredentialStore", () => {
     expect(await store.read("deepseek")).toBeUndefined();
   });
 
-  it("supports removing a credential by returning undefined from modify", async () => {
+  it("leaves the credential unchanged when the modify fn returns undefined, pi's no-op-refresh contract", async () => {
     const store = memoryStore({ deepseek: { kind: "api-key", key: "sk-1" } });
     await toPiCredentialStore(store).modify("deepseek", async () => undefined);
-    expect(await store.read("deepseek")).toBeUndefined();
+    expect(await store.read("deepseek")).toEqual({ kind: "api-key", key: "sk-1" });
+  });
+
+  it("keeps a concurrently refreshed credential when a second modify fn declines with undefined", async () => {
+    const store = memoryStore({ "openai-codex": { kind: "oauth", access: "stale", refresh: "r", expires: 1 } });
+    const pi = toPiCredentialStore(store);
+
+    // First caller refreshes under the store lock.
+    await pi.modify("openai-codex", async () => ({ type: "oauth", access: "fresh", refresh: "r2", expires: 2 }));
+    // Second caller sees the refreshed credential and yields to it: undefined.
+    const seen = await pi.modify("openai-codex", async (current) => {
+      expect(current).toEqual({ type: "oauth", access: "fresh", refresh: "r2", expires: 2 });
+      return undefined;
+    });
+
+    expect(seen).toEqual({ type: "oauth", access: "fresh", refresh: "r2", expires: 2 });
+    expect(await store.read("openai-codex")).toEqual({
+      kind: "oauth",
+      access: "fresh",
+      refresh: "r2",
+      expires: 2,
+    });
   });
 
   it("enumerates nothing, because nax-ai does not own account listing", async () => {

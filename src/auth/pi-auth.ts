@@ -50,7 +50,17 @@ export function toPiCredentialStore(store: CredentialStore): PiCredentialStore {
     // modify stays a single read-modify-write so the underlying store can hold
     // a lock across the whole operation. pi-ai runs OAuth refresh inside it.
     modify: async (providerId, fn) =>
-      toPi(await store.modify(providerId, async (current) => fromPi(await fn(toPi(current))))),
+      toPi(
+        await store.modify(providerId, async (current) => {
+          const next = await fn(toPi(current));
+          // pi's modify contract treats an undefined return as "leave the
+          // entry unchanged" — its OAuth refresh returns that when a
+          // concurrent caller already rotated the token. nax-ai's undefined
+          // means "remove", so the no-op is translated to the current
+          // credential, never propagated; removal goes through delete().
+          return next === undefined ? current : fromPi(next);
+        }),
+      ),
 
     delete: async (providerId) => {
       await store.delete(providerId);
