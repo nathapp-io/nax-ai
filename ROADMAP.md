@@ -16,6 +16,7 @@ Four documents, each answering a different question. Start here, then follow the
 | **Where** are we, and what is next? | This file |
 | **What** is nax-ai, and what was decided about its internals? | [`docs/superpowers/specs/2026-08-31-nax-ai-protocol-architecture-design.md`](docs/superpowers/specs/2026-08-31-nax-ai-protocol-architecture-design.md) |
 | **How** do I build the current milestone? | [`docs/superpowers/plans/2026-08-31-protocol-architecture.md`](docs/superpowers/plans/2026-08-31-protocol-architecture.md) |
+| **What** was decided for M2 specifically? | [`docs/superpowers/specs/2026-08-31-nax-ai-m2-real-transport-design.md`](docs/superpowers/specs/2026-08-31-nax-ai-m2-real-transport-design.md) |
 
 The artifact is a point-in-time analysis and does not track progress — it is the reasoning, not the state. The spec records decisions; **read it before designing anything new**, because several questions that look open are already settled there (see the warning below).
 
@@ -60,7 +61,7 @@ The critical path to a usable package, and the piece the M1 plan explicitly defe
 - First real completion against a cheap provider (`deepseek`, `groq`).
 - Publish `0.1.0` under the **`next`** dist-tag, never `latest`, while the API is unstable.
 
-M2 needs its own spec section or a short design note before its plan: the event mapping is the risky part and should be designed against pi-ai's actual types, not sketched.
+**M2's design is written and approved: [`docs/superpowers/specs/2026-08-31-nax-ai-m2-real-transport-design.md`](docs/superpowers/specs/2026-08-31-nax-ai-m2-real-transport-design.md).** It was designed against pi-ai's actual types rather than sketched, and it supersedes the three mismatches listed below with a fuller set.
 
 #### Three mismatches already visible in pi-ai's types
 
