@@ -462,7 +462,14 @@ Expected: FAIL — `resolveLoginTarget` and `_loginDeps` are not exported from `
 Add to `src/auth/pi-auth.ts`. Extend the existing import on line 8 to include `Provider as PiProvider`, and add the new imports:
 
 ```ts
-import type { Credential, MutableModels, Provider as PiProvider, CredentialStore as PiCredentialStore } from "@earendil-works/pi-ai";
+import type {
+  AuthEvent as PiAuthEvent,
+  AuthPrompt as PiAuthPrompt,
+  Credential,
+  MutableModels,
+  Provider as PiProvider,
+  CredentialStore as PiCredentialStore,
+} from "@earendil-works/pi-ai";
 import type { CredentialStore, ModelRef, ProviderId, StoredCredential } from "../types.ts";
 import { AuthMethodUnavailableError, LoginFailedError } from "./login-errors.ts";
 import type { LoginInteraction } from "./login-types.ts";
@@ -546,10 +553,15 @@ export async function resolveLoginTarget(providerId: ProviderId): Promise<LoginT
 }
 ```
 
-Add the temporary stub that Task 4 replaces — without it this task does not compile:
+Add the temporary stub that Task 4 replaces — without it this task does not compile. Give
+it Task 4's real return signature, not a `never` one: both compile here, but this way the
+Task 4 replacement is guaranteed signature-compatible rather than merely assignable.
 
 ```ts
-function toPiInteraction(_interaction: LoginInteraction): { prompt: never; notify: never } {
+function toPiInteraction(_interaction: LoginInteraction): {
+  prompt(prompt: PiAuthPrompt): Promise<string>;
+  notify(event: PiAuthEvent): void;
+} {
   throw new Error("toPiInteraction is implemented in Task 4");
 }
 ```
@@ -582,7 +594,11 @@ git commit -m "feat(auth): resolve a provider's real login methods"
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `test/auth/pi-auth-login.test.ts`. Add `LoginEvent`, `LoginPrompt` to the imports from `../../src/auth/login-types.ts`, and `type AuthEvent, type AuthPrompt` from `@earendil-works/pi-ai`:
+Append to `test/auth/pi-auth-login.test.ts`. Add `LoginEvent`, `LoginPrompt` to the type
+imports from `../../src/auth/login-types.ts`, and add `AuthEvent`, `AuthPrompt` — unaliased,
+there is no local collision in this file — to the **existing** `import type { Provider as
+PiProvider } from "@earendil-works/pi-ai";` line. Bare names only: an inner `type` modifier
+inside an `import type { ... }` is **TS2206** under `verbatimModuleSyntax`.
 
 ```ts
 describe("interaction translation", () => {
@@ -688,7 +704,13 @@ Expected: FAIL with "toPiInteraction is implemented in Task 4".
 
 - [ ] **Step 3: Write minimal implementation**
 
-Replace the Task 3 stub in `src/auth/pi-auth.ts`. Add `type AuthEvent as PiAuthEvent, type AuthPrompt as PiAuthPrompt` to the pi import, and `LoginEvent, LoginPrompt` to the `./login-types.ts` type import:
+Replace the Task 3 stub in `src/auth/pi-auth.ts`. `PiAuthPrompt` and `PiAuthEvent` are
+already imported (Task 3); add `LoginEvent, LoginPrompt` to the `./login-types.ts` type
+import.
+
+> **Do not write an inner `type` modifier** inside those `import type { ... }` statements —
+> `import type { A, type B }` is **TS2206** under `verbatimModuleSyntax`, which this repo
+> enables. Add bare names to the existing `import type` line.
 
 ```ts
 function fromPiPrompt(prompt: PiAuthPrompt): LoginPrompt {
@@ -948,10 +970,19 @@ Append to `test/auth/login.test.ts`:
 
 ```ts
 describe("login method selection", () => {
-  const both: LoginTarget = {
-    apiKey: { label: "Acme API key", run: async () => ({ kind: "api-key", key: "sk" }) },
-    oauth: { label: "Sign in with Acme", run: async () => ({ kind: "oauth", access: "a", refresh: "r", expires: 1 }) },
+  // Declared as standalone runners rather than plucked back off a LoginTarget:
+  // reading an optional property out gives `LoginRunner | undefined`, which
+  // will not assign to an optional property under exactOptionalPropertyTypes
+  // (TS2375).
+  const apiKeyRunner: LoginRunner = {
+    label: "Acme API key",
+    run: async () => ({ kind: "api-key", key: "sk" }),
   };
+  const oauthRunner: LoginRunner = {
+    label: "Sign in with Acme",
+    run: async () => ({ kind: "oauth", access: "a", refresh: "r", expires: 1 }),
+  };
+  const both: LoginTarget = { apiKey: apiKeyRunner, oauth: oauthRunner };
 
   it("prompts for the method when both are available, labelled from the runners", async () => {
     withTarget(both);
@@ -1000,7 +1031,7 @@ describe("login method selection", () => {
   });
 
   it("rejects a named method the provider does not offer", async () => {
-    withTarget({ apiKey: both.apiKey });
+    withTarget({ apiKey: apiKeyRunner });
 
     await expect(
       login({ providerId: "acme", credentials: createMemoryCredentialStore(), interaction: silent, method: "oauth" }),
@@ -1008,7 +1039,7 @@ describe("login method selection", () => {
   });
 
   it("reports which method was unavailable", async () => {
-    withTarget({ apiKey: both.apiKey });
+    withTarget({ apiKey: apiKeyRunner });
 
     await expect(
       login({ providerId: "acme", credentials: createMemoryCredentialStore(), interaction: silent, method: "oauth" }),
@@ -1028,7 +1059,8 @@ describe("login method selection", () => {
 });
 ```
 
-Add `LoginPrompt` and `LoginTarget` to the existing type imports at the top of the file if not already present.
+Add `LoginPrompt` to the type imports from `../../src/auth/login-types.ts`, and
+`LoginRunner`, `LoginTarget` to those from `../../src/auth/pi-auth.ts`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1037,7 +1069,16 @@ Expected: FAIL — `login()` currently takes `available[0]` unconditionally, so 
 
 - [ ] **Step 3: Write minimal implementation**
 
-In `src/auth/login.ts`, replace the `const chosen = available[0];` line and the two lines around it:
+In `src/auth/login.ts`, replace these three lines from Task 5 —
+
+```ts
+  const chosen = available[0];
+  if (chosen === undefined) throw new AuthMethodUnavailableError(providerId);
+
+  const credential: StoredCredential = await chosen.runner.run(interaction, signal ?? new AbortController().signal);
+```
+
+— with:
 
 ```ts
   if (available.length === 0) throw new AuthMethodUnavailableError(providerId);
@@ -1212,9 +1253,13 @@ Expected: FAIL — the empty key is stored, and the abort surfaces as the raw `A
 In `src/auth/login.ts`, add the imports and two helpers, then wrap the run:
 
 ```ts
+import type { ProviderId } from "../types.ts";
 import { AuthMethodUnavailableError, LoginCancelledError, LoginFailedError } from "./login-errors.ts";
 import { OAuthFlowProhibitedError } from "./oauth-policy.ts";
 ```
+
+(`StoredCredential` is already imported from `../types.ts` by Task 5 — add `ProviderId` to
+that same `import type` line rather than writing a second one.)
 
 ```ts
 function isCancellation(error: unknown, signal: AbortSignal): boolean {
@@ -1227,7 +1272,7 @@ function isCancellation(error: unknown, signal: AbortSignal): boolean {
  * it and every later call would fail with an auth error pointing nowhere near
  * this login.
  */
-function assertUsable(credential: StoredCredential, providerId: string): void {
+function assertUsable(credential: StoredCredential, providerId: ProviderId): void {
   if (credential.kind === "api-key" && credential.key.length === 0) {
     throw new LoginFailedError(providerId, "the flow returned an empty API key");
   }
@@ -1450,3 +1495,33 @@ git commit -m "docs: record the M5 live login verification"
 **Type consistency.** `LoginRunner.label` is used under that name in Tasks 3, 5 and 6. `resolveLoginTarget` returns `LoginTarget` with optional `apiKey`/`oauth` throughout. `LoginResult` is `{providerId, method, kind}` in Tasks 2, 5, 6 and 9. `AuthMethodUnavailableError(providerId, requested?)` is constructed with one argument in Tasks 3 and 5, two in Task 6, matching Task 2's signature. `_loginDeps.providers` (Task 3) and `_resolveTarget.resolve` (Task 5) are distinct seams at distinct layers, and Task 8 asserts neither is exported.
 
 **One ordering note for the executor:** Task 3 introduces a deliberately throwing `toPiInteraction` stub that Task 4 replaces. Task 3's tests pass with the stub in place because none of them reach a runner's `run()`. Task 4's first test is the one that proves the stub is gone. Do not skip Task 4.
+
+## Final review before handover
+
+The plan's riskiest code was compiled against this repo's real `tsconfig.json`
+(`strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`,
+`verbatimModuleSyntax`) rather than reasoned about. Six corrections came out of it:
+
+1. **`fromPiPrompt`'s `default:` branch returns a union-typed discriminant** (`type:
+   prompt.type` is `"text" | "secret"`). Assigning that to a discriminated union is a
+   common TS failure — **it compiles here.** Verified, not assumed; left as written.
+2. **Task 6's test plucked `both.apiKey` back off a `LoginTarget`** and assigned it to an
+   optional property — `LoginRunner | undefined` into `LoginRunner`, **TS2375** under
+   `exactOptionalPropertyTypes`. Rewritten to standalone runner constants.
+3. **Task 4's import instruction produced `import type { A, type B }`** — **TS2206** under
+   `verbatimModuleSyntax`, because Task 3 makes that statement an `import type`. Both the
+   source and test instructions now say bare names, with the error named.
+4. **Task 3's stub returned `{ prompt: never; notify: never }`.** That compiles, but it is
+   assignable rather than signature-compatible, so a wrong Task 4 replacement would still
+   typecheck. The stub now carries Task 4's real return signature, which moves the two pi
+   type imports into Task 3.
+5. **Task 6's edit site said "the two lines around it".** Replaced with the exact three
+   lines from Task 5 to delete, quoted.
+6. **`assertUsable` took `providerId: string`** where the rest of the codebase uses
+   `ProviderId`. Fixed, with a note to extend Task 5's existing `import type` rather than
+   add a second.
+
+Two things confirmed rather than changed: `createMemoryCredentialStore()` defaults its seed
+to `{}`, so the no-argument calls in Tasks 5–7 work; and `available[0]` is correctly typed
+`Choice | undefined` in Task 5 because `noUncheckedIndexedAccess` is on, so that
+`=== undefined` guard is load-bearing rather than dead.
