@@ -1,6 +1,6 @@
 # M5 — login flows: design
 
-**Status:** approved, not implemented. Plan: not yet written.
+**Status:** approved, not implemented. Plan: [`../plans/2026-09-01-nax-ai-m5-login-flows.md`](../plans/2026-09-01-nax-ai-m5-login-flows.md).
 
 ## The problem M5 actually solves
 
