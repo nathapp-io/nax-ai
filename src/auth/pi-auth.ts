@@ -301,7 +301,14 @@ export function registerBundledOAuthFlows(): Promise<void> {
   bundledOAuthFlows ??= (async () => {
     const { registerBunOAuthFlows } = await import("@earendil-works/pi-ai/bun-oauth");
     registerBunOAuthFlows();
-  })();
+  })().catch((error: unknown) => {
+    // Memoise the success, never the failure. Caching a rejected promise
+    // would turn one transient import error into a permanent one: every
+    // later login in this process would fail with it, and nothing would
+    // clear it short of a restart.
+    bundledOAuthFlows = undefined;
+    throw error;
+  });
   return bundledOAuthFlows;
 }
 
