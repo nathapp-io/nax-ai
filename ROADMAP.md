@@ -135,7 +135,7 @@ Reaching nax requires a `0.2.0` publish; until then the field exists only on the
 
 ### M5 — login flows ✅
 
-**Designed, not implemented:** [`docs/superpowers/specs/2026-09-01-nax-ai-m5-login-flows-design.md`](docs/superpowers/specs/2026-09-01-nax-ai-m5-login-flows-design.md).
+**Design & plan:** [`docs/superpowers/specs/2026-09-01-nax-ai-m5-login-flows-design.md`](docs/superpowers/specs/2026-09-01-nax-ai-m5-login-flows-design.md).
 
 nax-ai can hold credentials and use them; it cannot obtain them. M2's record says as much — its Codex check "used a pre-existing pi credential, since M2 does not implement login." The consumer-side gap is now concrete: nax's Phase A plan 2 is a `nax auth` CLI with nothing here to call, and it cannot reach pi-ai's flows itself without taking a direct dependency on a transitive package and landing one call from the prohibited Anthropic flow with no allowlist in front of it.
 
