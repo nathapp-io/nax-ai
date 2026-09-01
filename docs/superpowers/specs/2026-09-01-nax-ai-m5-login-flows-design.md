@@ -13,7 +13,7 @@ gap is now concrete: nax's Phase A plan 2 is a `nax auth` CLI, and there is noth
 this package for it to call.
 
 The flows themselves exist one layer down, in pi-ai's `dist/auth/oauth/`
-(`openai-codex`, `github-copilot`, `openrouter`, plus `device-code` and `pkce`
+(`openai-codex` and `openrouter` among them, plus `device-code` and `pkce`
 helpers). The consumer cannot reach them:
 
 - pi-ai is nax-ai's dependency, not nax's. Reaching it from nax means a direct
@@ -39,7 +39,7 @@ through the existing `CredentialStore`.
 - **No credential listing.** `CredentialStore` is `read`/`modify`/`delete` by design.
   A consumer that wants to enumerate reads its own store file; widening this interface to
   serve one CLI subcommand is the wrong direction of dependency.
-- **No new provider flows.** The three permitted flows are pi's. nax-ai registers, it does
+- **No new provider flows.** The permitted flows are pi's. nax-ai registers, it does
   not implement.
 
 ## The trap: dispatch must not read `ResolvedProvider.auth`
@@ -55,13 +55,14 @@ It is therefore a lossy projection, and unusable as a login dispatcher:
 | provider | pi `apiKey` | pi `oauth` | `ResolvedProvider.auth.kind` |
 |:---|:---|:---|:---|
 | `openai-codex` | — | yes | `oauth` |
-| `github-copilot` | yes | yes | **`api-key`** |
 | `openrouter` | yes | yes | **`api-key`** |
 | `anthropic` | yes | yes | `api-key` |
 | `deepseek` | yes | — | `api-key` |
 
-Two of the three permitted OAuth flows report `api-key`. A `login()` switching on
-`ResolvedProvider.auth.kind` would silently never run OAuth for them.
+`openrouter` — half of what M5 permits — reports `api-key`. A `login()` switching on
+`ResolvedProvider.auth.kind` would silently never run its OAuth flow, and the same
+projection hides `anthropic`'s OAuth, which is the one case where hiding it is correct.
+The dispatcher cannot tell those two apart, which is why it must not be the dispatcher.
 
 **Dispatch reads pi's own `provider.auth.{apiKey,oauth}`**, inside `src/auth/pi-auth.ts` —
 already on the `scripts/check-pi-ai-imports.ts:23` allowlist. The normalised catalog is not
@@ -80,11 +81,39 @@ available = {
 
 `options.method` skips the prompt when the caller already knows which it wants.
 
+## Ruling: `github-copilot` leaves the allowlist
+
+`PERMITTED_OAUTH_FLOWS` admits providers "whose terms permit third-party OAuth use, or
+whose flow is a first-party developer credential rather than a consumer subscription."
+pi reports `isSubscription: true` for `github-copilot`, which fails the second clause and
+was never established against the first. The entry shipped in `0.1.2` without that check.
+
+M5 removes it. **Permitted flows become `openai-codex` and `openrouter`.**
+
+It moves into `PROHIBITED_OAUTH_FLOWS` rather than simply being deleted, because deletion
+loses the reason: `assertOAuthFlowPermitted` raises its generic "Unknown OAuth flow" error
+for an absent entry, which reads as a typo and invites exactly the "fix" the policy file
+says it exists to prevent. The recorded reason states the actual status rather than
+overstating it — this is *not cleared*, which is different from Anthropic's *established
+ToS violation*, and the entry should say so plainly so that a future terms review can
+reverse it on evidence.
+
+`openai-codex` also carries `isSubscription: true` and stays, because its OAuth is
+OpenAI's own first-party Codex/ChatGPT flow — the first clause, not the second.
+
+**Blast radius is nil today, and this was checked rather than assumed** — prohibiting a
+flow is exactly what would render a provider unloadable, which is the failure the
+Anthropic comment warns about. `normaliseCatalog` calls the gate only when
+`rawProvider.auth.kind === "oauth"` (`src/providers/catalog.ts:63`), and `github-copilot`
+declares both auth kinds, so `toProviderAuth` maps it to `api-key` and the gate is never
+reached for it. Catalog resolution is unchanged; only what M5 offers to log in with
+changes. Its api-key login is unaffected and remains available.
+
 ## The gate applies per method, not per provider
 
-`anthropic` offers both. Its API-key login stays available; its OAuth option is simply
-never offered. That falls out of using the two policy functions for their two different
-jobs:
+`anthropic` and `github-copilot` each offer both. Their API-key logins stay available;
+their OAuth options are simply never offered. That falls out of using the two policy
+functions for their two different jobs:
 
 - **`isOAuthFlowPermitted`** (non-throwing) decides what to *offer*.
 - **`assertOAuthFlowPermitted`** guards actually *running* a flow, and fires **before any
@@ -226,9 +255,10 @@ set and M3 used rather than inventing a second injection style.
 
 What the tests must pin, because each is a way the design fails silently:
 
-- `github-copilot` and `openrouter` offer OAuth **despite** `ResolvedProvider.auth.kind`
-  reporting `api-key` — the trap this design exists to avoid, asserted directly.
-- `anthropic` offers api-key and **not** OAuth, and no loader is touched while deciding.
+- `openrouter` offers OAuth **despite** `ResolvedProvider.auth.kind` reporting
+  `api-key` — the trap this design exists to avoid, asserted directly.
+- `anthropic` and `github-copilot` offer api-key and **not** OAuth, and no loader is
+  touched while deciding.
 - A provider whose only flow is prohibited raises `OAuthFlowProhibitedError`, not
   `AuthMethodUnavailableError`.
 - The stored credential is written through `modify`, not a bare write.
@@ -236,8 +266,8 @@ What the tests must pin, because each is a way the design fails silently:
 - Cancellation surfaces as `LoginCancelledError`.
 
 One manual live verification against `openrouter`, recorded in the plan the way M2 recorded
-its `DEEPSEEK_API_KEY` probe. `openrouter` because it is the one permitted flow that is not
-a consumer subscription.
+its `DEEPSEEK_API_KEY` probe. `openrouter` because it is the permitted flow that is not a
+consumer subscription, and the one whose OAuth the catalog projection hides.
 
 ## Consumer sketch
 
@@ -255,18 +285,17 @@ await login({
 
 **A wording constraint that belongs to the consumer, recorded here because this design is
 why it holds:** since nothing is revoked, removing a credential leaves a live token at the
-provider until it expires — for `openai-codex` and `github-copilot`, a subscription token.
+provider until it expires — for `openai-codex`, a subscription token.
 `nax auth rm` must therefore not report "logged out". It removed a local credential, and
 for OAuth it should point the user at the provider's own revocation page.
 
 ## Open questions
 
-1. **`github-copilot` carries `isSubscription: true`.** The allowlist admits providers
-   "whose terms permit third-party OAuth use, or whose flow is a first-party developer
-   credential rather than a consumer subscription" — and that flag sits in tension with the
-   second clause. The entry predates this design and is being kept; it is recorded here
-   because M5 is what makes it one command away, and it deserves a terms check before the
-   consumer CLI ships rather than after.
+1. **Does removing `github-copilot` warrant a version bump beyond patch?**
+   `PERMITTED_OAUTH_FLOWS` is exported, so its contents are public API, but nothing today
+   can reach the flow (see the ruling above) and no release has offered a login. Treated as
+   a minor change shipping with the rest of M5 unless a consumer is found relying on the
+   constant's contents.
 2. **Does `login()` belong on `Client`?** It is currently a free function, because logging
    in needs a credential store and a provider table but not a configured client, and
    requiring one would make `nax auth login` construct a catalog it never uses. Revisit
