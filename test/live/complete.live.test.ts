@@ -11,6 +11,8 @@ interface Target {
   readonly model: string;
   readonly api: string;
   readonly request: Omit<ProtocolRequest, "model" | "provider">;
+  /** Overrides the generic note when a fixture is evidence of something more. */
+  readonly note?: string;
 }
 
 const READ_TOOL = {
@@ -83,6 +85,7 @@ const TARGETS: readonly Target[] = [
     model: "gpt-5.4-mini",
     api: "openai-codex-responses",
     request: { messages: [{ role: "user", content: "Reply with the single word: ok" }], maxTokens: 16 },
+    note: 'Recorded from openai-codex, a first-party provider rather than a gateway, over SSE — createPiDeps defaults transport to "sse" because pi-ai would otherwise prefer WebSocket here and no HTTP status could be captured. Evidence of openai-codex-responses event shape and that onResponse observes a real response; not evidence of any error status.',
   },
 ];
 
@@ -94,7 +97,7 @@ describe("record fixtures from live providers", () => {
         protocol: t.protocol,
         model: t.model,
         api: t.api,
-        note: `Recorded from ${t.provider}. Evidence of ${t.protocol} event shape only.`,
+        note: t.note ?? `Recorded from ${t.provider}. Evidence of ${t.protocol} event shape only.`,
       });
       const protocol = createPiProtocol(t.protocol, rec.deps);
 
@@ -103,8 +106,13 @@ describe("record fixtures from live providers", () => {
         events.push(e);
       }
 
-      rec.write(t.fixture);
+      const fixture = rec.write(t.fixture);
       expect(events.at(-1)?.type).toBe("done");
+      // A recorded status of 0 means onResponse never fired, so the fixture
+      // could not be evidence of the error-classification path. That is what
+      // WebSocket transport produced for openai-codex before the transport
+      // default moved to "sse".
+      expect(fixture.response.status).toBe(200);
     }, 120_000);
   }
 });
