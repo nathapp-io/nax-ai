@@ -6,9 +6,10 @@
  * caller's store before this returns, and never handed back.
  */
 
-import type { StoredCredential } from "../types.ts";
-import { AuthMethodUnavailableError } from "./login-errors.ts";
+import type { ProviderId, StoredCredential } from "../types.ts";
+import { AuthMethodUnavailableError, LoginCancelledError, LoginFailedError } from "./login-errors.ts";
 import type { LoginMethod, LoginOptions, LoginResult } from "./login-types.ts";
+import { OAuthFlowProhibitedError } from "./oauth-policy.ts";
 import { type LoginRunner, resolveLoginTarget } from "./pi-auth.ts";
 
 /** Test seam. */
@@ -41,6 +42,22 @@ async function select(available: readonly Choice[], options: LoginOptions): Prom
   return picked;
 }
 
+function isCancellation(error: unknown, signal: AbortSignal): boolean {
+  if (signal.aborted) return true;
+  return error instanceof Error && error.name === "AbortError";
+}
+
+/**
+ * A credential whose key is empty is not a credential. The store would accept
+ * it and every later call would fail with an auth error pointing nowhere near
+ * this login.
+ */
+function assertUsable(credential: StoredCredential, providerId: ProviderId): void {
+  if (credential.kind === "api-key" && credential.key.length === 0) {
+    throw new LoginFailedError(providerId, "the flow returned an empty API key");
+  }
+}
+
 export async function login(options: LoginOptions): Promise<LoginResult> {
   const { providerId, credentials, interaction, signal } = options;
   const target = await _resolveTarget.resolve(providerId);
@@ -53,7 +70,20 @@ export async function login(options: LoginOptions): Promise<LoginResult> {
 
   const chosen = await select(available, options);
 
-  const credential: StoredCredential = await chosen.runner.run(interaction, signal ?? new AbortController().signal);
+  const abort = signal ?? new AbortController().signal;
+
+  let credential: StoredCredential;
+  try {
+    credential = await chosen.runner.run(interaction, abort);
+  } catch (error) {
+    // A policy refusal keeps its own identity: its recorded reason is the
+    // point, and a generic failure would discard it.
+    if (error instanceof OAuthFlowProhibitedError) throw error;
+    if (isCancellation(error, abort)) throw new LoginCancelledError(providerId);
+    throw error;
+  }
+
+  assertUsable(credential, providerId);
 
   // modify, never a bare write: it is what holds the store's lock across the
   // whole read-modify-write.

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { _resolveTarget, login } from "../../src/auth/login.ts";
-import { AuthMethodUnavailableError } from "../../src/auth/login-errors.ts";
+import { AuthMethodUnavailableError, LoginCancelledError, LoginFailedError } from "../../src/auth/login-errors.ts";
 import type { LoginInteraction, LoginPrompt } from "../../src/auth/login-types.ts";
+import { OAuthFlowProhibitedError } from "../../src/auth/oauth-policy.ts";
 import type { LoginRunner, LoginTarget } from "../../src/auth/pi-auth.ts";
 import { createMemoryCredentialStore } from "../../src/credentials/memory-store.ts";
 
@@ -171,5 +172,95 @@ describe("login method selection", () => {
     await expect(
       login({ providerId: "acme", credentials: createMemoryCredentialStore(), interaction }),
     ).rejects.toThrow(AuthMethodUnavailableError);
+  });
+});
+
+describe("login failure paths", () => {
+  it("rejects an empty api-key rather than storing it", async () => {
+    // fromPi maps a missing key to "". Storing that yields a credential that
+    // looks present and fails at call time, far from its cause.
+    withTarget({ apiKey: { label: "Acme", run: async () => ({ kind: "api-key", key: "" }) } });
+    const credentials = createMemoryCredentialStore();
+
+    await expect(login({ providerId: "acme", credentials, interaction: silent })).rejects.toThrow(LoginFailedError);
+    expect(await credentials.read("acme")).toBeUndefined();
+  });
+
+  it("stores nothing when the flow throws", async () => {
+    withTarget({
+      apiKey: {
+        label: "Acme",
+        run: async () => {
+          throw new Error("upstream said no");
+        },
+      },
+    });
+    const credentials = createMemoryCredentialStore();
+
+    await expect(login({ providerId: "acme", credentials, interaction: silent })).rejects.toThrow("upstream said no");
+    expect(await credentials.read("acme")).toBeUndefined();
+  });
+
+  it("reports a rejected prompt as cancellation, not failure", async () => {
+    withTarget({
+      apiKey: {
+        label: "Acme",
+        run: async (interaction) => {
+          await interaction.prompt({ type: "secret", message: "API key" });
+          return { kind: "api-key", key: "unreachable" };
+        },
+      },
+    });
+    const abort = new Error("cancelled");
+    abort.name = "AbortError";
+    const interaction: LoginInteraction = {
+      prompt: async () => {
+        throw abort;
+      },
+      notify: () => {},
+    };
+
+    await expect(
+      login({ providerId: "acme", credentials: createMemoryCredentialStore(), interaction }),
+    ).rejects.toThrow(LoginCancelledError);
+  });
+
+  it("reports an aborted signal as cancellation", async () => {
+    const controller = new AbortController();
+    withTarget({
+      apiKey: {
+        label: "Acme",
+        run: async () => {
+          controller.abort();
+          throw new Error("stream closed");
+        },
+      },
+    });
+
+    await expect(
+      login({
+        providerId: "acme",
+        credentials: createMemoryCredentialStore(),
+        interaction: silent,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow(LoginCancelledError);
+  });
+
+  it("lets a policy refusal through as itself", async () => {
+    // A prohibited flow must not be reported as a generic login failure: the
+    // reason is the whole point of the error.
+    withTarget({
+      oauth: {
+        label: "Acme OAuth",
+        run: async () => {
+          throw new OAuthFlowProhibitedError("acme", "not cleared");
+        },
+      },
+    });
+
+    await expect(
+      login({ providerId: "acme", credentials: createMemoryCredentialStore(), interaction: silent }),
+    ).rejects.toThrow(OAuthFlowProhibitedError);
   });
 });
