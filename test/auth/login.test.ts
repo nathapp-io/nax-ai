@@ -104,6 +104,7 @@ describe("login method selection", () => {
   it("prompts for the method when both are available, labelled from the runners", async () => {
     withTarget(both);
     const prompts: LoginPrompt[] = [];
+    const controller = new AbortController();
     const interaction: LoginInteraction = {
       prompt: async (prompt) => {
         prompts.push(prompt);
@@ -112,7 +113,12 @@ describe("login method selection", () => {
       notify: () => {},
     };
 
-    const result = await login({ providerId: "acme", credentials: createMemoryCredentialStore(), interaction });
+    const result = await login({
+      providerId: "acme",
+      credentials: createMemoryCredentialStore(),
+      interaction,
+      signal: controller.signal,
+    });
 
     expect(prompts[0]).toEqual({
       type: "select",
@@ -121,6 +127,7 @@ describe("login method selection", () => {
         { id: "api-key", label: "Acme API key" },
         { id: "oauth", label: "Sign in with Acme" },
       ],
+      signal: controller.signal,
     });
     expect(result.method).toBe("oauth");
   });
@@ -172,6 +179,50 @@ describe("login method selection", () => {
     await expect(
       login({ providerId: "acme", credentials: createMemoryCredentialStore(), interaction }),
     ).rejects.toThrow(AuthMethodUnavailableError);
+  });
+
+  it("reports a rejected method prompt as cancellation", async () => {
+    // The method prompt is part of the login: a consumer cancelling it must
+    // surface the same LoginCancelledError as a cancelled flow prompt.
+    withTarget(both);
+    const abort = new Error("cancelled");
+    abort.name = "AbortError";
+    const interaction: LoginInteraction = {
+      prompt: async () => {
+        throw abort;
+      },
+      notify: () => {},
+    };
+
+    await expect(
+      login({ providerId: "acme", credentials: createMemoryCredentialStore(), interaction }),
+    ).rejects.toThrow(LoginCancelledError);
+  });
+
+  it("reports an aborted signal during method selection as cancellation", async () => {
+    // LoginOptions.signal reaches the method prompt: an already-aborted signal
+    // cancels the select just as it would cancel a flow prompt. The prompt
+    // would resolve for an idle signal, so the rejection can only come from
+    // the abort.
+    withTarget(both);
+    const controller = new AbortController();
+    controller.abort();
+    const interaction: LoginInteraction = {
+      prompt: async (prompt) => {
+        if (prompt.signal?.aborted) throw new Error("method prompt aborted");
+        return "api-key";
+      },
+      notify: () => {},
+    };
+
+    await expect(
+      login({
+        providerId: "acme",
+        credentials: createMemoryCredentialStore(),
+        interaction,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow(LoginCancelledError);
   });
 });
 

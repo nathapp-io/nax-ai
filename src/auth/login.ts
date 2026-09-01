@@ -17,7 +17,7 @@ export const _resolveTarget = { resolve: resolveLoginTarget };
 
 type Choice = { method: LoginMethod; runner: LoginRunner };
 
-async function select(available: readonly Choice[], options: LoginOptions): Promise<Choice> {
+async function select(available: readonly Choice[], options: LoginOptions, signal: AbortSignal): Promise<Choice> {
   const { providerId, method, interaction } = options;
 
   if (method !== undefined) {
@@ -33,6 +33,7 @@ async function select(available: readonly Choice[], options: LoginOptions): Prom
     type: "select",
     message: `How do you want to sign in to "${providerId}"?`,
     options: available.map((choice) => ({ id: choice.method, label: choice.runner.label })),
+    ...(signal !== undefined ? { signal } : {}),
   });
 
   const picked = available.find((choice) => choice.method === answer);
@@ -62,18 +63,18 @@ export async function login(options: LoginOptions): Promise<LoginResult> {
   const { providerId, credentials, interaction, signal } = options;
   const target = await _resolveTarget.resolve(providerId);
 
-  const available: { method: LoginMethod; runner: LoginRunner }[] = [];
+  const available: Choice[] = [];
   if (target.apiKey !== undefined) available.push({ method: "api-key", runner: target.apiKey });
   if (target.oauth !== undefined) available.push({ method: "oauth", runner: target.oauth });
 
   if (available.length === 0) throw new AuthMethodUnavailableError(providerId);
 
-  const chosen = await select(available, options);
-
   const abort = signal ?? new AbortController().signal;
 
+  let chosen: Choice;
   let credential: StoredCredential;
   try {
+    chosen = await select(available, options, abort);
     credential = await chosen.runner.run(interaction, abort);
   } catch (error) {
     // A policy refusal keeps its own identity: its recorded reason is the

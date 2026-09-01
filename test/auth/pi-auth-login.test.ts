@@ -2,6 +2,7 @@ import type { AuthEvent, AuthPrompt, Provider as PiProvider } from "@earendil-wo
 import { afterEach, describe, expect, it } from "vitest";
 import { AuthMethodUnavailableError } from "../../src/auth/login-errors.ts";
 import type { LoginEvent, LoginPrompt } from "../../src/auth/login-types.ts";
+import { OAuthFlowProhibitedError } from "../../src/auth/oauth-policy.ts";
 import { _loginDeps, resolveLoginTarget } from "../../src/auth/pi-auth.ts";
 
 /**
@@ -121,6 +122,15 @@ describe("resolveLoginTarget", () => {
   it("rejects an unknown provider", async () => {
     withProviders([]);
     await expect(resolveLoginTarget("nope")).rejects.toThrow(AuthMethodUnavailableError);
+  });
+
+  it("raises the policy error when a provider's only method is a prohibited oauth flow", async () => {
+    // A policy refusal must not read as an absence: with no api-key login and
+    // only a prohibited OAuth flow the target is empty — but the reason is a
+    // refusal, and it must keep its own error type.
+    withProviders([piProvider({ id: "anthropic", oauth: { name: "Anthropic (Claude Pro/Max)" } })]);
+
+    await expect(resolveLoginTarget("anthropic")).rejects.toThrow(OAuthFlowProhibitedError);
   });
 });
 

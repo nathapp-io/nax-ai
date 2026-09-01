@@ -174,6 +174,14 @@ export async function resolveLoginTarget(providerId: ProviderId): Promise<LoginT
     };
   }
 
+  if (target.apiKey === undefined && provider.auth.oauth !== undefined) {
+    // The provider's only method is an OAuth flow this package refuses to run.
+    // A policy refusal must not read as an absence: throw the policy error
+    // rather than AuthMethodUnavailableError. assertOAuthFlowPermitted
+    // distinguishes prohibited (OAuthFlowProhibitedError) from unknown.
+    assertOAuthFlowPermitted(providerId);
+  }
+
   return target;
 }
 
