@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  AuthMethodUnavailableError,
-  LoginCancelledError,
-  LoginFailedError,
-} from "../../src/auth/login-errors.ts";
+import { AuthMethodUnavailableError, LoginCancelledError, LoginFailedError } from "../../src/auth/login-errors.ts";
 
 describe("login errors", () => {
   it("names the provider when no method is available", () => {
