@@ -1,4 +1,3 @@
-import type { AssistantMessageEvent, Context } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { createPiDeps, createPiProtocol } from "../../src/protocols/pi-client.ts";
 import type { ProtocolEvent, ProtocolRequest } from "../../src/protocols/types.ts";
@@ -72,6 +71,19 @@ const TARGETS: readonly Target[] = [
     api: "openai-responses",
     request: { messages: [{ role: "user", content: "Reply with the single word: ok" }], maxTokens: 16 },
   },
+  {
+    // The one first-party target: OpenAI's own Codex OAuth rather than a
+    // gateway. It records over SSE because createPiDeps defaults transport to
+    // "sse" — pi-ai would otherwise prefer WebSocket here, which has no HTTP
+    // response, so onResponse would capture nothing and the fixture could not
+    // be evidence of the error-classification path.
+    fixture: "openai-codex-responses-text",
+    provider: "openai-codex",
+    protocol: "openai-codex-responses",
+    model: "gpt-5.4-mini",
+    api: "openai-codex-responses",
+    request: { messages: [{ role: "user", content: "Reply with the single word: ok" }], maxTokens: 16 },
+  },
 ];
 
 describe("record fixtures from live providers", () => {
@@ -95,34 +107,4 @@ describe("record fixtures from live providers", () => {
       expect(events.at(-1)?.type).toBe("done");
     }, 120_000);
   }
-
-  // openai-codex-responses defaults to WebSocket transport, which has no HTTP
-  // response for onResponse to observe — a fixture recorded that way carries
-  // status 0 and no headers, so the error-classification path this suite
-  // exists to exercise would go untested for this protocol. toPiOptions has
-  // no transport pass-through (adding one is a src/ change, out of scope for
-  // this plan), so this one target bypasses createPiProtocol/toPiOptions and
-  // drives PiDeps.stream directly with transport forced to "sse".
-  it("records openai-codex-responses-text over sse so onResponse captures a real status", async () => {
-    const rec = recordingDeps(createPiDeps({ credentials: piAuthStore() }), {
-      provider: "openai-codex",
-      protocol: "openai-codex-responses",
-      model: "gpt-5.4-mini",
-      api: "openai-codex-responses",
-      note: "Recorded from openai-codex with transport forced to sse so onResponse captures a real HTTP status and headers (the default WebSocket transport has none to capture).",
-    });
-
-    const model = await rec.deps.resolveModel("gpt-5.4-mini", "openai-codex");
-    const context: Context = {
-      messages: [{ role: "user", content: "Reply with the single word: ok", timestamp: 0 }],
-    };
-
-    const events: AssistantMessageEvent[] = [];
-    for await (const e of rec.deps.stream(model, context, { maxTokens: 16, transport: "sse" }, () => {})) {
-      events.push(e);
-    }
-
-    rec.write("openai-codex-responses-text");
-    expect(events.at(-1)?.type).toBe("done");
-  }, 120_000);
 });
