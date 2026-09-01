@@ -119,7 +119,8 @@ export interface LoginTarget {
 
 /**
  * Test seam. The real read is a dynamic import because pi-ai's provider table
- * is large and only login needs it, matching pi-catalog.ts's own pattern.
+ * is large and only login and the ambient-auth probe need it, matching
+ * pi-catalog.ts's own pattern.
  */
 export const _loginDeps = {
   providers: async (): Promise<readonly PiProvider[]> => {
