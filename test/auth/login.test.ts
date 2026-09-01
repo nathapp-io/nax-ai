@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { _resolveTarget, login } from "../../src/auth/login.ts";
 import { AuthMethodUnavailableError } from "../../src/auth/login-errors.ts";
-import type { LoginInteraction } from "../../src/auth/login-types.ts";
-import type { LoginTarget } from "../../src/auth/pi-auth.ts";
+import type { LoginInteraction, LoginPrompt } from "../../src/auth/login-types.ts";
+import type { LoginRunner, LoginTarget } from "../../src/auth/pi-auth.ts";
 import { createMemoryCredentialStore } from "../../src/credentials/memory-store.ts";
 
 const real = _resolveTarget.resolve;
@@ -81,6 +81,95 @@ describe("login", () => {
     withTarget({});
     await expect(
       login({ providerId: "acme", credentials: createMemoryCredentialStore(), interaction: silent }),
+    ).rejects.toThrow(AuthMethodUnavailableError);
+  });
+});
+
+describe("login method selection", () => {
+  // Declared as standalone runners rather than plucked back off a LoginTarget:
+  // reading an optional property out gives `LoginRunner | undefined`, which
+  // will not assign to an optional property under exactOptionalPropertyTypes
+  // (TS2375).
+  const apiKeyRunner: LoginRunner = {
+    label: "Acme API key",
+    run: async () => ({ kind: "api-key", key: "sk" }),
+  };
+  const oauthRunner: LoginRunner = {
+    label: "Sign in with Acme",
+    run: async () => ({ kind: "oauth", access: "a", refresh: "r", expires: 1 }),
+  };
+  const both: LoginTarget = { apiKey: apiKeyRunner, oauth: oauthRunner };
+
+  it("prompts for the method when both are available, labelled from the runners", async () => {
+    withTarget(both);
+    const prompts: LoginPrompt[] = [];
+    const interaction: LoginInteraction = {
+      prompt: async (prompt) => {
+        prompts.push(prompt);
+        return "oauth";
+      },
+      notify: () => {},
+    };
+
+    const result = await login({ providerId: "acme", credentials: createMemoryCredentialStore(), interaction });
+
+    expect(prompts[0]).toEqual({
+      type: "select",
+      message: expect.stringContaining("acme"),
+      options: [
+        { id: "api-key", label: "Acme API key" },
+        { id: "oauth", label: "Sign in with Acme" },
+      ],
+    });
+    expect(result.method).toBe("oauth");
+  });
+
+  it("runs the method the user selected", async () => {
+    withTarget(both);
+    const interaction: LoginInteraction = { prompt: async () => "api-key", notify: () => {} };
+
+    const result = await login({ providerId: "acme", credentials: createMemoryCredentialStore(), interaction });
+
+    expect(result.method).toBe("api-key");
+  });
+
+  it("does not prompt when the caller named a method", async () => {
+    withTarget(both);
+
+    const result = await login({
+      providerId: "acme",
+      credentials: createMemoryCredentialStore(),
+      interaction: silent, // throws if prompted
+      method: "oauth",
+    });
+
+    expect(result.method).toBe("oauth");
+  });
+
+  it("rejects a named method the provider does not offer", async () => {
+    withTarget({ apiKey: apiKeyRunner });
+
+    await expect(
+      login({ providerId: "acme", credentials: createMemoryCredentialStore(), interaction: silent, method: "oauth" }),
+    ).rejects.toThrow(AuthMethodUnavailableError);
+  });
+
+  it("reports which method was unavailable", async () => {
+    withTarget({ apiKey: apiKeyRunner });
+
+    await expect(
+      login({ providerId: "acme", credentials: createMemoryCredentialStore(), interaction: silent, method: "oauth" }),
+    ).rejects.toMatchObject({ requested: "oauth" });
+  });
+
+  it("rejects an unrecognised selection rather than defaulting", async () => {
+    // Silently falling back to the first method would bill a call against a
+    // credential path the user did not choose.
+    withTarget(both);
+    const interaction: LoginInteraction = { prompt: async () => "neither", notify: () => {} };
+
+    await expect(
+      login({ providerId: "acme", credentials: createMemoryCredentialStore(), interaction }),
     ).rejects.toThrow(AuthMethodUnavailableError);
   });
 });
