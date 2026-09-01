@@ -1,6 +1,7 @@
-import type { Provider as PiProvider } from "@earendil-works/pi-ai";
+import type { AuthEvent, AuthPrompt, Provider as PiProvider } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { AuthMethodUnavailableError } from "../../src/auth/login-errors.ts";
+import type { LoginEvent, LoginPrompt } from "../../src/auth/login-types.ts";
 import { _loginDeps, resolveLoginTarget } from "../../src/auth/pi-auth.ts";
 
 /**
@@ -120,5 +121,100 @@ describe("resolveLoginTarget", () => {
   it("rejects an unknown provider", async () => {
     withProviders([]);
     await expect(resolveLoginTarget("nope")).rejects.toThrow(AuthMethodUnavailableError);
+  });
+});
+
+describe("interaction translation", () => {
+  function recorder() {
+    const prompts: LoginPrompt[] = [];
+    const events: LoginEvent[] = [];
+    return {
+      prompts,
+      events,
+      interaction: {
+        prompt: async (prompt: LoginPrompt) => {
+          prompts.push(prompt);
+          return "answer";
+        },
+        notify: (event: LoginEvent) => {
+          events.push(event);
+        },
+      },
+    };
+  }
+
+  /** Drives the translation the way pi does: through a resolved runner. */
+  async function drive(input: { prompt?: AuthPrompt; event?: AuthEvent }) {
+    const seen = recorder();
+    withProviders([
+      {
+        id: "acme",
+        name: "acme",
+        auth: {
+          apiKey: {
+            name: "Acme API key",
+            login: async (interaction: { prompt(p: AuthPrompt): Promise<string>; notify(e: AuthEvent): void }) => {
+              if (input.event !== undefined) interaction.notify(input.event);
+              if (input.prompt !== undefined) await interaction.prompt(input.prompt);
+              return { type: "api_key", key: "k" };
+            },
+          },
+        },
+      } as unknown as PiProvider,
+    ]);
+    const target = await resolveLoginTarget("acme");
+    await target.apiKey?.run(seen.interaction, new AbortController().signal);
+    return seen;
+  }
+
+  it("renames manual_code to manual-code", async () => {
+    const seen = await drive({ prompt: { type: "manual_code", message: "Paste the URL" } });
+    expect(seen.prompts[0]).toEqual({ type: "manual-code", message: "Paste the URL" });
+  });
+
+  it("passes a secret prompt through unchanged", async () => {
+    const seen = await drive({ prompt: { type: "secret", message: "API key", placeholder: "sk-..." } });
+    expect(seen.prompts[0]).toEqual({ type: "secret", message: "API key", placeholder: "sk-..." });
+  });
+
+  it("carries select options through", async () => {
+    const seen = await drive({
+      prompt: { type: "select", message: "Pick", options: [{ id: "a", label: "A", description: "first" }] },
+    });
+    expect(seen.prompts[0]).toEqual({
+      type: "select",
+      message: "Pick",
+      options: [{ id: "a", label: "A", description: "first" }],
+    });
+  });
+
+  it("renames auth_url to auth-url", async () => {
+    const seen = await drive({ event: { type: "auth_url", url: "https://x", instructions: "open it" } });
+    expect(seen.events[0]).toEqual({ type: "auth-url", url: "https://x", instructions: "open it" });
+  });
+
+  it("renames device_code to device-code and keeps its timings", async () => {
+    const seen = await drive({
+      event: { type: "device_code", userCode: "ABCD", verificationUri: "https://v", intervalSeconds: 5 },
+    });
+    expect(seen.events[0]).toEqual({
+      type: "device-code",
+      userCode: "ABCD",
+      verificationUri: "https://v",
+      intervalSeconds: 5,
+    });
+  });
+
+  it("omits an absent optional rather than setting it undefined", async () => {
+    // exactOptionalPropertyTypes: an absent field and a field set to undefined
+    // are different things, and a consumer rendering `"instructions" in event`
+    // would see the wrong answer.
+    const seen = await drive({ event: { type: "auth_url", url: "https://x" } });
+    expect(seen.events[0]).not.toHaveProperty("instructions");
+  });
+
+  it("returns the consumer's answer to pi", async () => {
+    const seen = await drive({ prompt: { type: "text", message: "Name" } });
+    expect(seen.prompts).toHaveLength(1);
   });
 });

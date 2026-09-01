@@ -15,7 +15,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import type { CredentialStore, ModelRef, ProviderId, StoredCredential } from "../types.ts";
 import { AuthMethodUnavailableError, LoginFailedError } from "./login-errors.ts";
-import type { LoginInteraction } from "./login-types.ts";
+import type { LoginEvent, LoginInteraction, LoginPrompt } from "./login-types.ts";
 import { assertOAuthFlowPermitted, isOAuthFlowPermitted } from "./oauth-policy.ts";
 import type { AuthResolver, ResolvedAuth } from "./resolver.ts";
 
@@ -177,9 +177,63 @@ export async function resolveLoginTarget(providerId: ProviderId): Promise<LoginT
   return target;
 }
 
-function toPiInteraction(_interaction: LoginInteraction): {
+function fromPiPrompt(prompt: PiAuthPrompt): LoginPrompt {
+  const signal = prompt.signal !== undefined ? { signal: prompt.signal } : {};
+  switch (prompt.type) {
+    case "manual_code":
+      return {
+        ...signal,
+        type: "manual-code",
+        message: prompt.message,
+        ...(prompt.placeholder !== undefined ? { placeholder: prompt.placeholder } : {}),
+      };
+    case "select":
+      return { ...signal, type: "select", message: prompt.message, options: prompt.options };
+    default:
+      return {
+        ...signal,
+        type: prompt.type,
+        message: prompt.message,
+        ...(prompt.placeholder !== undefined ? { placeholder: prompt.placeholder } : {}),
+      };
+  }
+}
+
+function fromPiEvent(event: PiAuthEvent): LoginEvent {
+  switch (event.type) {
+    case "auth_url":
+      return {
+        type: "auth-url",
+        url: event.url,
+        ...(event.instructions !== undefined ? { instructions: event.instructions } : {}),
+      };
+    case "device_code":
+      return {
+        type: "device-code",
+        userCode: event.userCode,
+        verificationUri: event.verificationUri,
+        ...(event.intervalSeconds !== undefined ? { intervalSeconds: event.intervalSeconds } : {}),
+        ...(event.expiresInSeconds !== undefined ? { expiresInSeconds: event.expiresInSeconds } : {}),
+      };
+    case "info":
+      return { type: "info", message: event.message, ...(event.links !== undefined ? { links: event.links } : {}) };
+    default:
+      return { type: "progress", message: event.message };
+  }
+}
+
+/**
+ * Presents a consumer's LoginInteraction to pi. pi calls us, so this maps
+ * inward: pi's snake_case names become nax-ai's kebab-case ones.
+ */
+function toPiInteraction(interaction: LoginInteraction): {
   prompt(prompt: PiAuthPrompt): Promise<string>;
   notify(event: PiAuthEvent): void;
 } {
-  throw new Error("toPiInteraction is implemented in Task 4");
+  return {
+    prompt: async (prompt) => interaction.prompt(fromPiPrompt(prompt)),
+    notify: (event) => {
+      interaction.notify(fromPiEvent(event));
+    },
+  };
 }
