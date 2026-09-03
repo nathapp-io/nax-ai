@@ -129,3 +129,37 @@ describe("header precedence against the vendor header", () => {
     expect(seen?.headers?.["x-opencode-session"]).toBe("explicit");
   });
 });
+
+/**
+ * The gap the vendor-header check hides.
+ *
+ * `assertValidHeaders` sees the session id only once `vendorSessionHeaders` has
+ * embedded it, which happens for opencode alone. Every other provider carries
+ * it in `options.sessionId`, where pi-ai turns it into `x-session-id`,
+ * `session_id`, `x-client-request-id` or `x-session-affinity` — so validating
+ * the header map alone leaves the id unchecked exactly where it does the most
+ * work.
+ */
+describe("session id validation at the wire", () => {
+  const badId = "s-1\r\nx-injected: 1";
+
+  async function drain(provider: string, model: string, sessionId: string) {
+    const deps = createPiDeps({}, () => emptyStream());
+    const resolved = await deps.resolveModel(model, provider);
+    for await (const _ of deps.stream(resolved, { messages: [] }, { sessionId }, () => {})) {
+      // drain
+    }
+  }
+
+  it("rejects a spliceable id for a non-opencode provider, which no header check covers", async () => {
+    await expect(drain("openai-codex", "gpt-5.4", badId)).rejects.toThrow(/sessionId/);
+  });
+
+  it("rejects it for an opencode provider too", async () => {
+    await expect(drain("opencode-go", "deepseek-v4-flash", badId)).rejects.toThrow();
+  });
+
+  it("still accepts an ordinary id", async () => {
+    await expect(drain("openai-codex", "gpt-5.4", "s-1")).resolves.toBeUndefined();
+  });
+});

@@ -29,7 +29,7 @@ import type { CredentialStore, StopReason } from "../types.ts";
 import { toTokenUsage, totalTokens } from "../usage.ts";
 import { classifyHttpError, classifyThrown, parseRetryAfter } from "./errors.ts";
 import type { PiProtocolOptions } from "./pi-protocols.ts";
-import { assertValidHeaders, mergeRequestHeaders, withoutEmpty } from "./request-headers.ts";
+import { assertValidHeaders, assertValidSessionId, mergeRequestHeaders, withoutEmpty } from "./request-headers.ts";
 import { vendorSessionHeaders } from "./session-id.ts";
 import { createToolArgAccumulator, parseToolArgs } from "./tool-args.ts";
 import type {
@@ -462,6 +462,13 @@ export function createPiDeps(
       // through the client. The vendor header is included because it is added
       // after that earlier check.
       assertValidHeaders(requestHeaders);
+      // Separately, and not covered by the line above: the header check only
+      // sees the id once vendorSessionHeaders has embedded it, which happens
+      // for opencode alone. Every other provider carries it in options.sessionId
+      // and pi-ai turns it into x-session-id / session_id / x-client-request-id
+      // / x-session-affinity — so without this the id is unchecked precisely
+      // where it does the most work.
+      assertValidSessionId(options_?.sessionId);
       const mergedHeaders = mergeRequestHeaders(requestHeaders, auth.headers);
       const stream = streamSimple ?? models.streamSimple.bind(models);
       yield* stream(model, context, {
