@@ -97,3 +97,35 @@ describe("createPiDeps session wiring", () => {
     expect(seen?.sessionId).toBe("s-1");
   });
 });
+
+describe("vendorSessionHeaders edge cases", () => {
+  it("treats an empty id as absent", () => {
+    expect(vendorSessionHeaders("opencode-go", "")).toBeUndefined();
+  });
+
+  it.each(["constructor", "__proto__", "toString"])("does not resolve %s off the prototype", (provider) => {
+    expect(vendorSessionHeaders(provider, "s-1")).toBeUndefined();
+  });
+});
+
+describe("header precedence against the vendor header", () => {
+  it("lets an explicit request header override the vendor spelling", async () => {
+    let seen: SimpleStreamOptions | undefined;
+    const deps = createPiDeps({}, (_m, _c, options) => {
+      seen = options;
+      return emptyStream();
+    });
+    const model = await deps.resolveModel("deepseek-v4-flash", "opencode-go");
+
+    for await (const _ of deps.stream(
+      model,
+      { messages: [] },
+      { sessionId: "s-1", headers: { "x-opencode-session": "explicit" } },
+      () => {},
+    )) {
+      // drain
+    }
+
+    expect(seen?.headers?.["x-opencode-session"]).toBe("explicit");
+  });
+});
