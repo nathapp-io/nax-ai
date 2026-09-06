@@ -38,7 +38,11 @@ describe("vendorSessionHeaders", () => {
     expect(vendorSessionHeaders(provider, "s-1")).toEqual({ "x-opencode-session": "s-1" });
   });
 
-  it.each(["openrouter", "openai", "anthropic", "deepseek"])(
+  it("adds x-session-id for openrouter, whose format pi-ai has but never enables", () => {
+    expect(vendorSessionHeaders("openrouter", "s-1")).toEqual({ "x-session-id": "s-1" });
+  });
+
+  it.each(["openai", "anthropic", "deepseek"])(
     "adds nothing for %s, whose headers pi-ai already derives from sessionId",
     (provider) => {
       expect(vendorSessionHeaders(provider, "s-1")).toBeUndefined();
@@ -79,6 +83,37 @@ describe("createPiDeps session wiring", () => {
     }
 
     expect(seen?.headers).toMatchObject({ "x-opencode-session": "s-1" });
+  });
+
+  /**
+   * The regression this pair exists for.
+   *
+   * pi-ai reads `x-session-id` out of a per-model `sessionAffinityFormat` of
+   * "openrouter" (dist/api/openai-completions.js), but the branch is guarded by
+   * `compat.sendSessionAffinityHeaders`, which `detectCompat` sets to false and
+   * which not one of the 333 openrouter catalog entries overrides. So the id
+   * was computed, validated and forwarded, then dropped a layer above the
+   * socket: every OpenRouter generation record came back with `session_id:
+   * null` and no sticky routing, and therefore no warm provider cache.
+   * `ProviderOverride` deliberately exposes no `compat`, so the vendor table is
+   * the only lever this package has.
+   */
+  it("adds x-session-id for openrouter, which pi-ai derives but never enables", async () => {
+    let seen: SimpleStreamOptions | undefined;
+    const deps = createPiDeps({}, (_m, _c, options) => {
+      seen = options;
+      return emptyStream();
+    });
+    const model = await deps.resolveModel("z-ai/glm-5.3", "openrouter");
+
+    for await (const _ of deps.stream(model, { messages: [] }, { sessionId: "s-1" }, () => {})) {
+      // drain
+    }
+
+    expect(seen?.headers).toMatchObject({ "x-session-id": "s-1" });
+    // Still forwarded as an option too: that is what keys pi-ai's prompt cache,
+    // and it is what pi would use if a future version flipped the gate.
+    expect(seen?.sessionId).toBe("s-1");
   });
 
   it("leaves a non-opencode provider's headers alone", async () => {
