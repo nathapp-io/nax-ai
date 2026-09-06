@@ -60,15 +60,20 @@ describe("vendorSessionHeaders", () => {
   });
 
   /**
-   * `minimax`/`minimax-cn` (anthropic-messages) and `anthropic` itself ARE
-   * behind the gate, so pi-ai sends them nothing — and that is correct. Neither
-   * vendor documents a session or affinity header: MiniMax's Anthropic-
-   * compatible endpoint caches through explicit `cache_control`, exactly as
-   * Anthropic does, and that reaches the wire unaffected by any of this
-   * (verified with a stub fetch on MiniMax-M2.7). A table entry here would be
-   * an invented header, which is the one thing a vendor table must not hold.
+   * `minimax`/`minimax-cn`, `vercel-ai-gateway` and `anthropic` itself (all
+   * anthropic-messages) ARE behind the gate, so pi-ai sends them nothing — and
+   * that is correct. None documents a session or affinity header. MiniMax's
+   * Anthropic-compatible endpoint caches through explicit `cache_control`,
+   * exactly as Anthropic does, and that reaches the wire unaffected by any of
+   * this (verified with a stub fetch on MiniMax-M2.7 and on a Vercel gateway
+   * model). Vercel's own routing and cache controls — `order`, `sort`,
+   * `caching`, `cache_ttl`, `cache_anchor_items`, `byok` — are body fields
+   * under `providerOptions.gateway`, not headers, so no header-shaped seam
+   * reaches them and none of them is a session key. A table entry for any of
+   * these would be an invented header, which is the one thing a vendor table
+   * must not hold.
    */
-  it.each(["minimax", "minimax-cn", "anthropic", "deepseek"])(
+  it.each(["minimax", "minimax-cn", "vercel-ai-gateway", "anthropic", "deepseek"])(
     "adds nothing for %s, which documents no session header to send",
     (provider) => {
       expect(vendorSessionHeaders(provider, "s-1")).toBeUndefined();
