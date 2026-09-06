@@ -42,8 +42,34 @@ describe("vendorSessionHeaders", () => {
     expect(vendorSessionHeaders("openrouter", "s-1")).toEqual({ "x-session-id": "s-1" });
   });
 
-  it.each(["openai", "anthropic", "deepseek"])(
-    "adds nothing for %s, whose headers pi-ai already derives from sessionId",
+  /**
+   * Absent for two different reasons, recorded separately so a later reader
+   * does not generalise the wrong one.
+   *
+   * `openai` (openai-responses) and `openai-codex` (openai-codex-responses)
+   * reach the wire through APIs that do NOT consult
+   * `compat.sendSessionAffinityHeaders`: openai-responses sets `session_id` and
+   * `x-client-request-id` on any truthy id, and codex's `buildSSEHeaders` sets
+   * `session-id` and `x-client-request-id` the same way. Adding either here
+   * would duplicate a header pi-ai already sends. (openai verified with a stub
+   * fetch; codex is a code read — pi refuses to build the request without real
+   * OAuth, so no wire capture backs it.)
+   */
+  it.each(["openai", "openai-codex"])("adds nothing for %s, whose header pi-ai sends ungated", (provider) => {
+    expect(vendorSessionHeaders(provider, "s-1")).toBeUndefined();
+  });
+
+  /**
+   * `minimax`/`minimax-cn` (anthropic-messages) and `anthropic` itself ARE
+   * behind the gate, so pi-ai sends them nothing — and that is correct. Neither
+   * vendor documents a session or affinity header: MiniMax's Anthropic-
+   * compatible endpoint caches through explicit `cache_control`, exactly as
+   * Anthropic does, and that reaches the wire unaffected by any of this
+   * (verified with a stub fetch on MiniMax-M2.7). A table entry here would be
+   * an invented header, which is the one thing a vendor table must not hold.
+   */
+  it.each(["minimax", "minimax-cn", "anthropic", "deepseek"])(
+    "adds nothing for %s, which documents no session header to send",
     (provider) => {
       expect(vendorSessionHeaders(provider, "s-1")).toBeUndefined();
     },
