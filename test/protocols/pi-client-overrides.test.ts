@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import { createClient } from "../../src/client.ts";
 import { createPiDeps, createPiProtocol } from "../../src/protocols/pi-client.ts";
 import type { ProtocolOptions } from "../../src/protocols/pi-protocols.ts";
+import { normaliseCatalog } from "../../src/providers/catalog.ts";
 import { defaultProviders } from "../../src/providers/pi-catalog.ts";
 import type { ProviderOverride, ResolvedModel } from "../../src/providers/types.ts";
 
@@ -159,6 +160,36 @@ describe("provider overrides at the protocol seam", () => {
 
     await drive(deps, BUNDLED, "openai");
     expect(stub.models[0]?.headers).toEqual({ "x-tenant": "acme" });
+  });
+
+  it("keeps the last of a repeated id, as the client-side catalog does", async () => {
+    // normaliseCatalog stores into a Map, so the last entry wins there. The
+    // wire resolves by first match, so an array here would keep the first and
+    // the two catalogs would name different models for one id.
+    const deps = createPiDeps({
+      providerOverrides: [
+        {
+          provider: "openai",
+          models: [
+            { ...PHANTOM_MODEL, contextWindow: 111 },
+            { ...PHANTOM_MODEL, contextWindow: 222 },
+          ],
+        },
+      ],
+    });
+
+    const clientSide = normaliseCatalog(await defaultProviders(["openai"]), [
+      {
+        provider: "openai",
+        models: [
+          { ...PHANTOM_MODEL, contextWindow: 111 },
+          { ...PHANTOM_MODEL, contextWindow: 222 },
+        ],
+      },
+    ]);
+
+    await expect(deps.resolveModel(PHANTOM, "openai")).resolves.toMatchObject({ contextWindow: 222 });
+    expect(clientSide.model("openai", PHANTOM)?.contextWindow).toBe(222);
   });
 
   it("throws at construction for a provider the backend catalog does not know", () => {

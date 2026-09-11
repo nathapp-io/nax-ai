@@ -498,8 +498,16 @@ function applyOverrides(models: MutableModels, overrides: readonly ProviderOverr
       );
     }
 
-    const synthesised = (override.models ?? []).map((model) => synthesiseModel(base, model));
-    const overriddenIds = new Set(synthesised.map((model) => model.id));
+    // Keyed by id, last-wins, because normaliseCatalog stores override models
+    // into a Map and so keeps the last of a repeated id. Mapping to an array
+    // here instead would keep the first at the wire (resolveModel takes the
+    // first match) while the client kept the last — the two catalogs would
+    // disagree about which model an id names, which is the whole class of bug
+    // this seam exists to close.
+    const byId = new Map<string, Model<Api>>();
+    for (const model of override.models ?? []) byId.set(model.id, synthesiseModel(base, model));
+    const synthesised = [...byId.values()];
+    const overriddenIds = new Set(byId.keys());
     // The override wins on an id collision and every other bundled model
     // survives — the same semantics normaliseCatalog applies on the client
     // side, so the two catalogs cannot disagree about which model an id names.
