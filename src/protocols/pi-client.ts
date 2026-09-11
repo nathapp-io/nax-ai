@@ -437,6 +437,34 @@ function toPiCost(pricing: Pricing): Model<Api>["cost"] {
 }
 
 /**
+ * The bundled sibling an override model is templated from.
+ *
+ * The rule is deliberate rather than positional. Taking the first model on the
+ * api meant the choice was an artefact of the snapshot's array order: a pi-ai
+ * bump that reordered or inserted models silently changed which `input`,
+ * `compat` and `thinkingLevelMap` an existing override inherited. Largest
+ * `contextWindow` is the closest data-driven proxy for "the model this
+ * override is a sibling of"; larger `maxTokens` breaks a context tie, and id is
+ * the final key so the pick is a total order that cannot move when the catalog
+ * is merely reordered. The id key is a stability measure, not a quality
+ * ranking.
+ */
+export function pickTemplate(models: readonly Model<Api>[], protocol: string): Model<Api> | undefined {
+  let best: Model<Api> | undefined;
+  for (const candidate of models) {
+    if (candidate.api !== protocol) continue;
+    if (best === undefined || isBetterTemplate(candidate, best)) best = candidate;
+  }
+  return best;
+}
+
+function isBetterTemplate(candidate: Model<Api>, best: Model<Api>): boolean {
+  if (candidate.contextWindow !== best.contextWindow) return candidate.contextWindow > best.contextWindow;
+  if (candidate.maxTokens !== best.maxTokens) return candidate.maxTokens > best.maxTokens;
+  return candidate.id < best.id;
+}
+
+/**
  * A pi `Model` for an override entry, templated off a sibling.
  *
  * `ResolvedModel` is deliberately narrower than pi's `Model`: it carries no
@@ -457,7 +485,7 @@ function toPiCost(pricing: Pricing): Model<Api>["cost"] {
  * therefore reach the wire, and be translated by the template's rules.
  */
 function synthesiseModel(base: PiProvider, model: ResolvedModel): Model<Api> {
-  const template = base.getModels().find((candidate) => candidate.api === model.protocol);
+  const template = pickTemplate(base.getModels(), model.protocol);
   if (template === undefined) {
     throw new Error(
       `Provider "${base.id}" has no model on api "${model.protocol}" to template override model "${model.id}" from.`,
