@@ -10,6 +10,7 @@
  * on first resolve of a protocol and not before.
  */
 
+import type { ProviderOverride } from "../providers/types.ts";
 import type { CredentialStore } from "../types.ts";
 import type { ClientApp } from "./client-app.ts";
 import type { ProtocolEntries } from "./registry.ts";
@@ -72,6 +73,22 @@ export interface ProtocolOptions {
    * pi-ai's own `User-Agent`.
    */
   readonly clientApp?: ClientApp;
+  /**
+   * Declaration-data overrides for the backend catalog, in the same shape and
+   * with the same semantics as `ClientOptions.providerOverrides`.
+   *
+   * Both are needed, and they are not the same catalog. `ClientOptions`
+   * patches the one `client.model()`, `listModels()` and `pricing()` read;
+   * this one patches the catalog the protocol resolves against at request
+   * time. Supplying only the first is issue #36: the model resolves and prices
+   * correctly and then throws "Unknown model" on the first real request.
+   *
+   * Pass the same array to both. The array's identity is the cache key for the
+   * backend catalog built from it (see createPiDeps in pi-client.ts), so
+   * reusing one array is also what keeps the four protocol entries sharing a
+   * single instance.
+   */
+  readonly providerOverrides?: readonly ProviderOverride[];
 }
 
 /** @deprecated Use {@link ProtocolOptions}. Kept as a non-breaking alias. */
