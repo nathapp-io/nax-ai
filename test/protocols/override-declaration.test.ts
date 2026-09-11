@@ -17,6 +17,7 @@ import { recordDeclaredOverrides } from "../../src/protocols/override-declaratio
 import { createPiDeps, createPiProtocol } from "../../src/protocols/pi-client.ts";
 import { defaultProtocols } from "../../src/protocols/pi-protocols.ts";
 import type { ProtocolEntries } from "../../src/protocols/registry.ts";
+import { defaultProviders } from "../../src/providers/pi-catalog.ts";
 import type { ProviderOverride, ResolvedModel } from "../../src/providers/types.ts";
 
 const PHANTOM = "gpt-5.9-not-in-snapshot";
@@ -131,6 +132,43 @@ describe("provider overrides must be declared on both sides (#36)", () => {
 
     expect(result.stopReason).toBe("stop");
     expect(stub.models.map((m) => m.id)).toEqual([PHANTOM]);
+  });
+
+  it("does not demand a declaration for an override of a model the base catalog carries", async () => {
+    // Amending a bundled model — correcting stale pricing is the usual reason —
+    // works today with no protocol-side declaration at all: pricing never
+    // crosses the wire, and the backend resolves the id from its own catalog.
+    // Failing this would break wiring that is already correct.
+    const providers = await defaultProviders(["openai"]);
+    const bundled = providers[0]?.models[0];
+    if (bundled === undefined) throw new Error("expected a bundled openai model");
+
+    const repriced: ResolvedModel = {
+      id: bundled.id,
+      provider: "openai",
+      protocol: bundled.protocol ?? "openai-responses",
+      pricing: { input: 99, output: 99, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: bundled.contextWindow,
+      supportsTools: bundled.supportsTools,
+      thinkingLevels: bundled.thinkingLevels,
+    };
+
+    const client = createClient({
+      providers,
+      providerOverrides: [{ provider: "openai", models: [repriced] }],
+      protocols: defaultProtocols(),
+    });
+
+    await expect(client.model("openai", bundled.id)).resolves.toMatchObject({ pricing: { input: 99 } });
+  });
+
+  it("still throws for a model the base catalog does not carry", async () => {
+    // The other side of the same coin: a post-snapshot model has nowhere else
+    // to be found, so an undeclared protocol side is issue #36.
+    const providers = await defaultProviders(["openai"]);
+    expect(() => createClient({ providers, providerOverrides: overrides(), protocols: defaultProtocols() })).toThrow(
+      new RegExp(PHANTOM),
+    );
   });
 
   it("does not throw when the protocol side declares more than the client does", () => {

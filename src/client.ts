@@ -76,8 +76,18 @@ export function createClient(options: ClientOptions): Client {
     typeof options.protocols === "function" ? options.protocols({ providerOverrides }) : options.protocols;
   // Before the registry, and at construction rather than in validate(): an
   // override the protocol side never heard about resolves and prices happily
-  // and only fails once a request reaches the wire (issue #36).
-  assertProtocolOverridesDeclared(providerOverrides, protocols);
+  // and only fails once a request reaches the wire (issue #36). The base
+  // catalog is consulted so that amending a model the providers already carry
+  // — correcting stale pricing, say — is not held to a declaration the wire
+  // does not need.
+  const baseModelIds = new Map<string, ReadonlySet<string>>(
+    options.providers.map((provider) => [provider.id, new Set(provider.models.map((model) => model.id))]),
+  );
+  assertProtocolOverridesDeclared(
+    providerOverrides,
+    protocols,
+    (provider, modelId) => baseModelIds.get(provider)?.has(modelId) ?? false,
+  );
   const registry = createRegistry(protocols, options.backends ?? {});
 
   // A negative value is a config bug, not a policy choice — clamping it to 0

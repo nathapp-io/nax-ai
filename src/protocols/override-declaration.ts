@@ -75,6 +75,14 @@ const REMEDY =
  * about a model the client cannot name is inert, and forbidding it would make
  * one shared protocol set unusable by several narrower clients.
  *
+ * Nor does an override of a model the base catalog already carries. Amending a
+ * bundled model — correcting stale pricing is the usual reason — needs nothing
+ * at the wire: pricing never crosses it, and the backend resolves that id from
+ * its own catalog whether or not the override was declared there too. Only a
+ * model the base catalog does not carry can produce #36, because only that one
+ * has nowhere else to be found. Demanding declaration for the rest would fail
+ * consumers whose wiring is already correct.
+ *
  * Called at construction rather than from `validate()`, because `validate()`
  * is opt-in and a consumer who never calls it keeps exactly the silent trap
  * this exists to remove.
@@ -82,6 +90,8 @@ const REMEDY =
 export function assertProtocolOverridesDeclared(
   clientSide: readonly ProviderOverride[],
   entries: ProtocolEntries,
+  /** Whether the base provider catalog already carries this model. */
+  inBaseCatalog: (provider: string, modelId: string) => boolean,
 ): void {
   const protocolSide = declaredOverridesFor(entries);
   // Hand-built entries never declared anything, and "did not declare" is not
@@ -97,13 +107,15 @@ export function assertProtocolOverridesDeclared(
     const counterparts = forProvider(override.provider);
 
     for (const model of override.models ?? []) {
+      if (inBaseCatalog(override.provider, model.id)) continue;
       const covered = counterparts.some((counterpart) =>
         (counterpart.models ?? []).some((candidate) => candidate.id === model.id),
       );
       if (!covered) {
         throw new Error(
-          `Provider override for "${override.provider}" declares model "${model.id}" on the client, but the ` +
-            `protocol entries declare no override model with that id for that provider. ${REMEDY}`,
+          `Provider override for "${override.provider}" declares model "${model.id}", which the base provider ` +
+            `catalog does not carry, but the protocol entries declare no override model with that id for that ` +
+            `provider, so nothing at the wire can resolve it. ${REMEDY}`,
         );
       }
     }
