@@ -440,11 +440,14 @@ function toPiCost(pricing: Pricing): Model<Api>["cost"] {
  * A pi `Model` for an override entry, templated off a sibling.
  *
  * `ResolvedModel` is deliberately narrower than pi's `Model`: it carries no
- * `name`, `maxTokens`, `baseUrl`, `input` or `compat`, and those are not
- * optional on the wire side. Inventing values for them would be guessing at
- * provider behaviour, so instead every field the override does not speak about
- * is inherited from a bundled model of the same provider on the same api — the
- * closest thing to "what this provider's models look like" that exists.
+ * `name`, `baseUrl`, `input` or `compat`, and those are not optional on the
+ * wire side. Inventing values for them would be guessing at provider behaviour,
+ * so instead every field the override does not speak about is inherited from a
+ * bundled model of the same provider on the same api — the closest thing to
+ * "what this provider's models look like" that exists. `maxTokens` is not in
+ * that list: `ResolvedModel` carries it, so an override that declares one has
+ * it sent (`model.maxTokens ?? template.maxTokens`) rather than clamped to the
+ * template's.
  *
  * `thinkingLevelMap` is inherited for the same reason, with a caveat worth
  * knowing: `thinkingLevels` is authoritative client-side — `clampThinkingLevel`
@@ -470,6 +473,12 @@ function synthesiseModel(base: PiProvider, model: ResolvedModel): Model<Api> {
     api: model.protocol as Api,
     provider: model.provider,
     contextWindow: model.contextWindow,
+    // The override's own ceiling wins; the template's is only a fallback for
+    // an override that states none. pi clamps to `model.maxTokens` in
+    // buildBaseOptions whenever a request omits its own cap, and anthropic's
+    // thinking adjustment clamps to it even when a caller supplies one, so
+    // inheriting a smaller sibling's value is a silent truncation.
+    maxTokens: model.maxTokens ?? template.maxTokens,
     cost: toPiCost(model.pricing),
     // pi's `reasoning` is the boolean form of our level list. "off" alone is
     // no thinking support, which is exactly what `false` means here.

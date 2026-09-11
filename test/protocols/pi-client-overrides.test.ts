@@ -106,6 +106,18 @@ describe("provider overrides at the protocol seam", () => {
     expect(stub.models[0]?.contextWindow).toBe(987654);
   });
 
+  it("sends the override's own maxTokens when it declares one", async () => {
+    const stub = stubStream();
+    const deps = createPiDeps(
+      { providerOverrides: [{ provider: "openai", models: [{ ...PHANTOM_MODEL, maxTokens: 2048 }] }] },
+      stub.streamSimple,
+    );
+
+    await drive(deps, PHANTOM, "openai");
+
+    expect(stub.models[0]?.maxTokens).toBe(2048);
+  });
+
   it("keeps every bundled model of the overridden provider resolvable", async () => {
     const deps = createPiDeps({ providerOverrides: OVERRIDES }, stubStream().streamSimple);
     const bundled = await deps.resolveModel(BUNDLED, "openai");
