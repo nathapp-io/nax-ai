@@ -210,6 +210,24 @@ describe("provider overrides at the protocol seam", () => {
     ).toThrow(new RegExp(`${PHANTOM}.*anthropic-messages|anthropic-messages.*${PHANTOM}`));
   });
 
+  it("rejects an override model whose own provider field names a different provider", () => {
+    // Symmetric with normaliseCatalog: the model would land in openai's bucket
+    // keeping provider "anthropic", and createPiDeps.stream resolves auth from
+    // model.provider — so the request would be signed for the wrong provider.
+    let message = "";
+    try {
+      createPiDeps({
+        providerOverrides: [{ provider: "openai", models: [{ ...PHANTOM_MODEL, provider: "anthropic" }] }],
+      });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+
+    expect(message).toContain("openai");
+    expect(message).toContain(PHANTOM);
+    expect(message).toContain("anthropic");
+  });
+
   it("lets an override win over a bundled id while every other bundled model survives", async () => {
     const collide: ResolvedModel = { ...PHANTOM_MODEL, id: BUNDLED, contextWindow: 4242 };
     const deps = createPiDeps({ providerOverrides: [{ provider: "openai", models: [collide] }] });

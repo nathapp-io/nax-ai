@@ -26,6 +26,7 @@ import type {
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { createPiAuthResolver, toPiCredentialStore } from "../auth/pi-auth.ts";
 import type { AuthResolver } from "../auth/resolver.ts";
+import { assertOverrideModelProvider } from "../providers/override-model.ts";
 import type { Pricing, ProviderOverride, ResolvedModel } from "../providers/types.ts";
 import type { CredentialStore, StopReason } from "../types.ts";
 import { toTokenUsage, totalTokens } from "../usage.ts";
@@ -505,7 +506,13 @@ function applyOverrides(models: MutableModels, overrides: readonly ProviderOverr
     // disagree about which model an id names, which is the whole class of bug
     // this seam exists to close.
     const byId = new Map<string, Model<Api>>();
-    for (const model of override.models ?? []) byId.set(model.id, synthesiseModel(base, model));
+    for (const model of override.models ?? []) {
+      // Rejected before synthesis, so the two catalogs refuse the same config
+      // with the same message rather than one of them building a model whose
+      // provider field would then pick the wrong credentials at the wire.
+      assertOverrideModelProvider(override.provider, model);
+      byId.set(model.id, synthesiseModel(base, model));
+    }
     const synthesised = [...byId.values()];
     const overriddenIds = new Set(byId.keys());
     // The override wins on an id collision and every other bundled model
