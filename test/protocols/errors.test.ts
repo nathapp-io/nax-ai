@@ -90,14 +90,20 @@ describe("classifyProviderError", () => {
     // "a stream that broke under a non-failing status" below.
   });
 
-  it("refines only bad-request, so a token-shaped message on a failing status keeps its kind", () => {
+  it("refines only bad-request or a broken stream, so a token-shaped message on a genuine 5xx keeps transport", () => {
     // A rate limit that mentions tokens is still a rate limit: the caller
     // should wait, not compact.
     expect(classifyProviderError(429, "rate limit reached: too many tokens per minute")).toBe("rate-limit");
+    // 500 has its own verdict (transport) that outranks bad-request-only
+    // refinement, so the message is never consulted here.
     expect(classifyProviderError(500, "prompt is too long")).toBe("transport");
-    // Not context-overflow: an overflow always arrives on a failing status, so
-    // declining to guess one from a broken stream still costs nothing.
-    expect(classifyProviderError(undefined, "prompt is too long")).not.toBe("context-overflow");
+  });
+
+  it("reads overflow markers from an absent status too (nax#44)", () => {
+    // Corrected premise: an overflow does NOT always arrive on a failing
+    // status (see nax#44), so an absent status is no longer exempted -- it is
+    // classified the same way a non-failing status is, via classifyBrokenStream.
+    expect(classifyProviderError(undefined, "prompt is too long")).toBe("context-overflow");
   });
 
   it("agrees with classifyHttpError on every failing status when no message is given", () => {
@@ -147,6 +153,60 @@ describe("classifyProviderError", () => {
       // 503 is overloaded by status; a rate-limit phrase in its body must not
       // relabel it, because the status is the stronger signal.
       expect(classifyProviderError(503, "rate limit exceeded")).toBe("overloaded");
+    });
+  });
+
+  // nax#44. OpenRouter (and other OpenAI-compatible aggregators) answer HTTP
+  // 200 and relay an upstream provider's 4xx as a stream `error` event, with
+  // `code: 400` inside the JSON payload -- so a genuine context overflow can
+  // arrive under a status that is not itself a failure. Before this fix,
+  // isNonFailingStatus(200) short-circuited straight to classifyBrokenStream
+  // and the overflow markers were never consulted; the oversized prompt was
+  // filed as `transport` and simply retried by transport, never compacted.
+  describe("an overflow relayed in-stream under a non-failing status (nax#44)", () => {
+    const verbatimOverflowMessage =
+      "Requested token count exceeds the model's maximum context length of 1048576 tokens. " +
+      "You requested a total of 1050647 tokens: 177022 tokens from the input messages and " +
+      "873625 tokens for the completion. Please reduce the number of tokens in the input " +
+      "messages or the completion to fit within the limit.";
+
+    it("classifies the verbatim aggregator-relayed message as context-overflow under 200", () => {
+      expect(classifyProviderError(200, verbatimOverflowMessage)).toBe("context-overflow");
+    });
+
+    it("keeps classifying the same message as context-overflow under its real 400 (no #29 regression)", () => {
+      expect(classifyProviderError(400, verbatimOverflowMessage)).toBe("context-overflow");
+    });
+
+    it("classifies a bare overflow code as context-overflow under 200", () => {
+      expect(classifyProviderError(200, "context_length_exceeded")).toBe("context-overflow");
+    });
+
+    it("does not widen bad-request: an ordinary malformed 400 stays bad-request", () => {
+      expect(classifyProviderError(400, "tools.0.custom.name: String should match pattern")).toBe("bad-request");
+    });
+
+    it("keeps a genuine idle-timeout transport fault out of context-overflow under 200 (no #29 regression)", () => {
+      expect(classifyProviderError(200, "Upstream idle timeout exceeded")).toBe("transport");
+    });
+
+    it("keeps a real rate-limit status authoritative even when the body's wording overlaps an overflow marker", () => {
+      // "Too many tokens" here is throttling language, not an overflow -- but
+      // it happens to contain the existing (pre-#44, out-of-scope-to-fix)
+      // "too many tokens" overflow marker. A genuinely failing 429 has its own
+      // verdict and short-circuits before any message is consulted, so status
+      // precedence protects this case.
+      //
+      // Note: under a *non-failing* status (e.g. 200) this same message would
+      // be misclassified as context-overflow by the widened marker check,
+      // because "too many tokens" is only distinguishable from throttling
+      // wording by a marker-table change, which is out of this fix's scope
+      // (see CONTEXT_OVERFLOW_MARKERS). That ambiguity already exists today
+      // for this message under a genuine 400 -- this fix does not introduce
+      // it, and does not widen it beyond what a bad-request already does.
+      expect(classifyProviderError(429, "ThrottlingException: Too many tokens, please wait before trying again")).toBe(
+        "rate-limit",
+      );
     });
   });
 });

@@ -83,16 +83,14 @@ function isNonFailingStatus(status: number | undefined): boolean {
  * verdict of its own keeps it — a 429 mentioning tokens is a rate limit, and
  * the caller should wait rather than compact.
  *
- * A non-failing status is refined to `transport` (nax#1869). An error event
- * that arrives under a 200 means the response headers were fine and the stream
- * broke afterwards; that is a transport fault, not the "unknown" the bare
- * status table has to answer. It is the shape OpenRouter's "Upstream idle
- * timeout exceeded" takes, and reading it as unknown cost a real run both its
- * agent swap and nax-ai's own bounded retry, since both key on `transport`.
- * An absent status gets the same answer for consistency with `classifyThrown`,
- * the sibling path for the identical fault. Neither can become
- * `context-overflow`: an overflow always arrives on a failing status, so
- * declining to guess one here still costs nothing.
+ * A non-failing status is refined to `transport` (nax#1869), unless the
+ * message carries policy or overflow content, in which case that refinement
+ * takes over — see `classifyBrokenStream`. That refinement, not the status
+ * gate, is what decides `context-overflow`: OpenRouter (and other
+ * OpenAI-compatible aggregators) answer HTTP 200 and relay an upstream
+ * provider's 4xx as a stream `error` event, so a genuine overflow can arrive
+ * on a status that is not itself a failure (nax#44). The status is a signal
+ * about the envelope, not a gate on what the message is allowed to mean.
  */
 export function classifyProviderError(status: number | undefined, message: string | undefined): ProtocolErrorKind {
   const kind = classifyHttpError(status);
@@ -103,19 +101,30 @@ export function classifyProviderError(status: number | undefined, message: strin
 
   if (kind !== "bad-request" || message === undefined) return kind;
 
+  return matchesContextOverflow(message) ? "context-overflow" : kind;
+}
+
+/** Whether a message names a context-window overflow, case-insensitively. */
+function matchesContextOverflow(message: string): boolean {
   const haystack = message.toLowerCase();
-  return CONTEXT_OVERFLOW_MARKERS.some((marker) => haystack.includes(marker)) ? "context-overflow" : kind;
+  return CONTEXT_OVERFLOW_MARKERS.some((marker) => haystack.includes(marker));
 }
 
 /**
  * The kind for an error event whose status reported no failure: `transport`,
- * unless the message carries policy content nax-ai must not retry itself.
+ * unless the message carries policy content nax-ai must not retry itself
+ * (checked first, so an established rate-limit/overload phrasing keeps its
+ * kind), or names a context overflow (nax#44) — the aggregator-relay shape
+ * described on `classifyProviderError`.
  */
 function classifyBrokenStream(message: string | undefined): ProtocolErrorKind {
   if (message === undefined) return "transport";
   const haystack = message.toLowerCase();
+
   const policy = STREAM_POLICY_MARKERS.find(([marker]) => haystack.includes(marker));
-  return policy ? policy[1] : "transport";
+  if (policy) return policy[1];
+
+  return matchesContextOverflow(message) ? "context-overflow" : "transport";
 }
 
 /**
