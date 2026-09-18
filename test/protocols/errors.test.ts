@@ -197,16 +197,71 @@ describe("classifyProviderError", () => {
       // verdict and short-circuits before any message is consulted, so status
       // precedence protects this case.
       //
-      // Note: under a *non-failing* status (e.g. 200) this same message would
-      // be misclassified as context-overflow by the widened marker check,
-      // because "too many tokens" is only distinguishable from throttling
-      // wording by a marker-table change, which is out of this fix's scope
-      // (see CONTEXT_OVERFLOW_MARKERS). That ambiguity already exists today
-      // for this message under a genuine 400 -- this fix does not introduce
-      // it, and does not widen it beyond what a bad-request already does.
+      // Note: this message is now also kept out of context-overflow under a
+      // NON-failing status, and under a plain 400, by NON_OVERFLOW_MARKERS --
+      // status precedence is no longer the only thing protecting it.
       expect(classifyProviderError(429, "ThrottlingException: Too many tokens, please wait before trying again")).toBe(
         "rate-limit",
       );
+    });
+
+    it("keeps a throttle out of context-overflow under a non-failing status and a plain 400", () => {
+      // The exclusion, not status precedence. Both of these consult the
+      // overflow table, and "too many tokens" matches it verbatim.
+      const throttle = "ThrottlingException: Too many tokens, please wait before trying again";
+      expect(classifyProviderError(200, throttle)).toBe("transport");
+      expect(classifyProviderError(400, throttle)).toBe("bad-request");
+    });
+  });
+
+  // Marker coverage. Each entry is a real phrasing documented by the provider
+  // or captured from its payload; one case per phrasing, so a reworded message
+  // shows up as a failing case rather than a run that silently gives up on a
+  // recoverable fault. Asserted under 200 (the aggregator-relay shape of
+  // nax#44) and 400 (the direct shape), because both must reach the table.
+  describe("context-overflow phrasings across providers", () => {
+    const cases: readonly (readonly [provider: string, message: string])[] = [
+      ["Anthropic", "prompt is too long: 213462 tokens > 200000 maximum"],
+      ["Anthropic 413", '413 {"error":{"type":"request_too_large","message":"Request exceeds the maximum size"}}'],
+      ["OpenAI", "Your input exceeds the context window of this model"],
+      ["OpenAI/LiteLLM", "Requested token count exceeds the model's maximum context length of 131072 tokens"],
+      ["OpenAI-compatible", "Input length (265330) exceeds model's maximum context length (262144)."],
+      ["Google Gemini", "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)"],
+      ["xAI Grok", "This model's maximum prompt length is 131072 but the request contains 537812 tokens"],
+      ["Groq", "Please reduce the length of the messages or completion"],
+      [
+        "OpenRouter",
+        "This endpoint's maximum context length is 131072 tokens. However, you requested about 200000 tokens",
+      ],
+      ["OpenRouter/Poolside", "Input length 265330 exceeds the maximum allowed input length of 262144 tokens."],
+      ["Together AI", "The input (265330 tokens) is longer than the model's context length (262144 tokens)."],
+      ["llama.cpp", "the request exceeds the available context size, try increasing it"],
+      ["LM Studio", "tokens to keep from the initial prompt is greater than the context length"],
+      ["GitHub Copilot", "prompt token count of 265330 exceeds the limit of 262144"],
+      ["MiniMax", "invalid params, context window exceeds limit"],
+      ["Kimi For Coding", "Your request exceeded model token limit: 262144 (requested: 265330)"],
+      ["DS4 server", "Prompt has 265330 tokens, but the configured context size is 262144 tokens"],
+      ["Mistral", "Prompt contains 265330 tokens, too large for model with 262144 maximum context length"],
+      ["DashScope/Qwen", "Range of input length should be [1, 129024]"],
+      ["Ollama", "prompt too long; exceeded max context length by 3186 tokens"],
+      ["z.ai", "model_context_window_exceeded"],
+    ];
+
+    for (const [provider, message] of cases) {
+      it(`recognises ${provider}`, () => {
+        expect(classifyProviderError(200, message)).toBe("context-overflow");
+        expect(classifyProviderError(400, message)).toBe("context-overflow");
+      });
+    }
+
+    it("leaves unrelated failures alone", () => {
+      // None of these name a context limit; widening the table must not drag
+      // them in. The 5xx and 429 are covered by status precedence; the 400 and
+      // the 200 actually reach the marker table.
+      expect(classifyProviderError(400, "tools.0.custom.name: String should match pattern")).toBe("bad-request");
+      expect(classifyProviderError(200, "Upstream idle timeout exceeded")).toBe("transport");
+      expect(classifyProviderError(200, "Provider returned error")).toBe("transport");
+      expect(classifyProviderError(401, "invalid api key")).toBe("auth");
     });
   });
 });
