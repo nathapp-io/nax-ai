@@ -32,6 +32,13 @@ function toProviderAuth(id: string, auth: { apiKey?: unknown; oauth?: unknown })
   throw new Error(`Provider "${id}" declares neither api-key nor oauth auth.`);
 }
 
+function explicitStrictToolSamplingDeclaration(model: {
+  readonly api: string;
+  readonly compat?: { readonly supportsStrictMode?: boolean; readonly supportsStrictTools?: boolean };
+}): boolean | undefined {
+  return model.api === "anthropic-messages" ? model.compat?.supportsStrictTools : model.compat?.supportsStrictMode;
+}
+
 /**
  * Neutral name for this module's public entry point.
  *
@@ -41,12 +48,6 @@ function toProviderAuth(id: string, auth: { apiKey?: unknown; oauth?: unknown })
  * names what this returns (the client's default provider catalog), not what
  * produces it today. The old name stays as a deprecated, non-breaking alias.
  */
-function explicitStrictToolSamplingDeclaration(model: {
-  readonly api: string;
-  readonly compat?: { readonly supportsStrictMode?: boolean; readonly supportsStrictTools?: boolean };
-}): boolean | undefined {
-  return model.api === "anthropic-messages" ? model.compat?.supportsStrictTools : model.compat?.supportsStrictMode;
-}
 
 export async function defaultProviders(ids?: readonly string[]): Promise<RawProvider[]> {
   const { builtinProviders, getBuiltinModels, getBuiltinProviders } = await import(
