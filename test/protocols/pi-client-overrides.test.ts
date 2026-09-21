@@ -535,3 +535,53 @@ describe("openRouterRouting (issue #43)", () => {
     );
   });
 });
+
+/**
+ * Amending a model the base catalog already carries (issue #43, hardening).
+ *
+ * `pickTemplate` answers "what does a model of this provider on this api look
+ * like", which is the right question for a phantom id and the wrong one for an
+ * id the catalog already has: the honest template for `deepseek/deepseek-chat`
+ * is `deepseek/deepseek-chat`. Real bundled ids, because a synthetic fixture
+ * would not reproduce the size ordering that causes this.
+ */
+describe("amending a bundled model (issue #43)", () => {
+  const AMENDED: ResolvedModel = {
+    id: "deepseek/deepseek-chat",
+    provider: "openrouter",
+    protocol: "openai-completions",
+    // Corrected pricing is the usual reason to amend a bundled entry; no
+    // maxTokens is declared, which is what exposes the inherited one.
+    pricing: { input: 0.25, output: 1, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 163840,
+    supportsTools: true,
+    thinkingLevels: [],
+  };
+
+  it("inherits the model's own output ceiling, not the largest sibling's", async () => {
+    const deps = createPiDeps({ providerOverrides: [{ provider: "openrouter", models: [AMENDED] }] });
+    const [bundled] = (await defaultProviders(["openrouter"]))
+      .flatMap((p) => p.models)
+      .filter((m) => m.id === AMENDED.id);
+    const amended = await deps.resolveModel(AMENDED.id, "openrouter");
+
+    expect(bundled?.maxTokens).toBeDefined();
+    expect(amended.maxTokens).toBe(bundled?.maxTokens);
+  });
+
+  it("does not inherit image support the model does not have", async () => {
+    const deps = createPiDeps({ providerOverrides: [{ provider: "openrouter", models: [AMENDED] }] });
+    const amended = await deps.resolveModel(AMENDED.id, "openrouter");
+
+    expect(amended.input).toEqual(["text"]);
+  });
+
+  it("still templates a phantom id off a sibling, since it has no entry of its own", async () => {
+    // The rule only fires on an id the base catalog carries; everything the
+    // #39 and #47 template rules do for a phantom must be unchanged.
+    const phantom: ResolvedModel = { ...AMENDED, id: "deepseek/deepseek-v9-not-in-snapshot" };
+    const deps = createPiDeps({ providerOverrides: [{ provider: "openrouter", models: [phantom] }] });
+
+    await expect(deps.resolveModel(phantom.id, "openrouter")).resolves.toMatchObject({ id: phantom.id });
+  });
+});

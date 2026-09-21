@@ -538,6 +538,10 @@ function isBetterTemplate(candidate: Model<Api>, best: Model<Api>): boolean {
  * it sent (`model.maxTokens ?? template.maxTokens`) rather than clamped to the
  * template's.
  *
+ * When the base catalog already carries this id on this api, that entry is the
+ * template and none of the selection rules below apply: an amendment inherits
+ * from the model it amends.
+ *
  * `thinkingLevelMap` (and the `compat.thinkingFormat` bundled inside
  * `compat`) is inherited from the template `pickTemplate` selects, which is
  * now itself thinking-aware (issue #47) — so an inherited map is expected to
@@ -555,7 +559,15 @@ function isBetterTemplate(candidate: Model<Api>, best: Model<Api>): boolean {
  *    — see `deriveThinkingLevelMap`.
  */
 function synthesiseModel(base: PiProvider, model: ResolvedModel): Model<Api> {
-  const template = pickTemplate(base.getModels(), model.protocol, model.thinkingLevels);
+  // An override may amend a model the base catalog already carries — correcting
+  // stale pricing is the usual reason, pinning routing (issue #43) the new one.
+  // For that id the honest template is that model itself: `pickTemplate` answers
+  // "what does a model of this provider on this api look like", which for an id
+  // the catalog already has would hand it a size-picked stranger's `maxTokens`
+  // and `input`. The api must match too, since `compat` is api-typed and an
+  // override is free to re-declare the protocol.
+  const own = base.getModels().find((candidate) => candidate.id === model.id && candidate.api === model.protocol);
+  const template = own ?? pickTemplate(base.getModels(), model.protocol, model.thinkingLevels);
   if (template === undefined) {
     throw new Error(
       `Provider "${base.id}" has no model on api "${model.protocol}" to template override model "${model.id}" from.`,
