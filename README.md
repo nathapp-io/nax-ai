@@ -74,6 +74,34 @@ const client = createClient({
 
 **Fields you do not state are inherited from a sibling.** `ResolvedModel` is narrower than the wire's model, so `name`, `baseUrl`, `input` and the provider compatibility settings come from another model of the same provider on the same protocol — preferring one that supports your declared thinking levels. State `maxTokens` and `thinkingLevelMap` explicitly when they matter: an inherited ceiling is a silent truncation, and an inherited thinking map can mark a level you declared unsupported.
 
+### Pinning an OpenRouter endpoint
+
+Against an aggregator, one model id is many endpoints: different machines, different prices, different quantizations, chosen per request. A `ResolvedModel` carried on a `ProviderOverride` can pin that choice with `openRouterRouting`, which is sent verbatim as the request's `provider` field:
+
+```ts
+const overrides = [
+  {
+    provider: "openrouter",
+    models: [
+      {
+        id: "deepseek/deepseek-v4-flash",
+        provider: "openrouter",
+        protocol: "openai-completions",
+        pricing: { input: 0.25, output: 1, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 163840,
+        supportsTools: true,
+        thinkingLevels: [],
+        openRouterRouting: { allow_fallbacks: false, only: ["deepinfra"], quantizations: ["fp8"] },
+      },
+    ],
+  },
+];
+```
+
+Pass the same array to both `createClient` and `defaultProtocols` — declaring it on the client alone fails at construction with a message explaining why.
+
+This is declaration data on a model, not a per-request option: pinning belongs to the model entry so that two runs of one configuration are served the same way. Only `protocol: "openai-completions"` can send it, and declaring it on any other protocol throws rather than being ignored.
+
 ### Knowing which response you got
 
 `CompleteResult` and the `done` protocol event carry `responseId` and `responseModel` when the provider reports them. Against an aggregator these are the only handle on what actually served a request: one model id can resolve to different upstream endpoints at different prices and quantizations per call, so a cost ledger that multiplies tokens by the catalog rate is approximate, and `responseId` is what lets you reconcile it afterwards (OpenRouter resolves it through `/generation?id=`). `responseModel` appears only when the provider names a model different from the one requested, so its absence is not a statement that no remap happened.

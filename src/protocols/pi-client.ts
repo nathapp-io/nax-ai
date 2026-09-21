@@ -27,8 +27,8 @@ import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { createPiAuthResolver, toPiCredentialStore } from "../auth/pi-auth.ts";
 import type { AuthResolver } from "../auth/resolver.ts";
-import { assertOverrideModelProvider } from "../providers/override-model.ts";
-import type { Pricing, ProviderOverride, ResolvedModel } from "../providers/types.ts";
+import { assertOverrideModelProvider, assertOverrideModelRouting } from "../providers/override-model.ts";
+import type { OpenRouterRouting, Pricing, ProviderOverride, ResolvedModel } from "../providers/types.ts";
 import type { CredentialStore, StopReason } from "../types.ts";
 import { toTokenUsage, totalTokens } from "../usage.ts";
 import { vendorAppHeaders } from "./client-app.ts";
@@ -586,7 +586,36 @@ function synthesiseModel(base: PiProvider, model: ResolvedModel): Model<Api> {
     // pi's `reasoning` is the boolean form of our level list. "off" alone is
     // no thinking support, which is exactly what `false` means here.
     reasoning: model.thinkingLevels.some((level) => level !== "off"),
+    // Merged onto the template's compat, never replacing it: `thinkingFormat`
+    // and the rest of the provider's detected settings live in the same object
+    // and are what translate a thinking level on the wire.
+    ...(model.openRouterRouting !== undefined
+      ? { compat: { ...template.compat, openRouterRouting: toPiOpenRouterRouting(model.openRouterRouting) } }
+      : {}),
     ...(thinkingLevelMap !== undefined ? { thinkingLevelMap } : {}),
+  };
+}
+
+/**
+ * Our routing declaration, in the shape pi's `compat` wants.
+ *
+ * A copy rather than a pass-through for one reason: our arrays are `readonly`
+ * and pi's are not, so spreading each present one is what makes the object
+ * assignable without a cast. Conditional spreads keep an undeclared preference
+ * out of the request entirely — `exactOptionalPropertyTypes`, and an
+ * `undefined`-valued key would be serialised as a stated non-preference.
+ */
+function toPiOpenRouterRouting(routing: OpenRouterRouting) {
+  return {
+    ...(routing.allow_fallbacks !== undefined ? { allow_fallbacks: routing.allow_fallbacks } : {}),
+    ...(routing.require_parameters !== undefined ? { require_parameters: routing.require_parameters } : {}),
+    ...(routing.data_collection !== undefined ? { data_collection: routing.data_collection } : {}),
+    ...(routing.zdr !== undefined ? { zdr: routing.zdr } : {}),
+    ...(routing.order !== undefined ? { order: [...routing.order] } : {}),
+    ...(routing.only !== undefined ? { only: [...routing.only] } : {}),
+    ...(routing.ignore !== undefined ? { ignore: [...routing.ignore] } : {}),
+    ...(routing.quantizations !== undefined ? { quantizations: [...routing.quantizations] } : {}),
+    ...(routing.sort !== undefined ? { sort: routing.sort } : {}),
   };
 }
 
@@ -682,6 +711,7 @@ function applyOverrides(models: MutableModels, overrides: readonly ProviderOverr
       // with the same message rather than one of them building a model whose
       // provider field would then pick the wrong credentials at the wire.
       assertOverrideModelProvider(override.provider, model);
+      assertOverrideModelRouting(model);
       byId.set(model.id, synthesiseModel(base, model));
     }
     const synthesised = [...byId.values()];
