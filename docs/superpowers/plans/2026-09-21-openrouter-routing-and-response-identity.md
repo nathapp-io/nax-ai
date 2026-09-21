@@ -4,13 +4,29 @@
 
 **Goal:** A consumer can learn which response a provider actually served (P1), and can pin an OpenRouter-compatible model to specific upstream endpoints and quantizations as declaration data (P2), without a proxy sidecar and without a per-request escape hatch.
 
-**Architecture:** Three independent halves. (P1) The `done` protocol event and `CompleteResult` gain optional `responseId` / `responseModel`, read off the pi `AssistantMessage` the `done` case already holds and discards — provider-agnostic, no OpenRouter knowledge anywhere. (P2) `ResolvedModel` gains an optional, narrowly typed `openRouterRouting` — declaration data, the same category as `maxTokens` and `thinkingLevelMap` — which both catalogs carry and `synthesiseModel` maps into pi's `compat.openRouterRouting`, guarded by a construction-time assert so a declaration that cannot reach the wire fails loudly instead of sitting inert. (Hardening) `synthesiseModel` prefers the model's own bundled entry as its template when the base catalog carries that id on the same api, so amending a bundled model stops inheriting a size-picked stranger's `maxTokens` and `input`.
+**Architecture:** One documentation task and three independent code halves. (Docs) The `ProviderOverride` mechanism P2 extends has no consumer documentation at all, so Task 0 writes it before anything is added to it. (P1) The `done` protocol event and `CompleteResult` gain optional `responseId` / `responseModel`, read off the pi `AssistantMessage` the `done` case already holds and discards — provider-agnostic, no OpenRouter knowledge anywhere. (P2) `ResolvedModel` gains an optional, narrowly typed `openRouterRouting` — declaration data, the same category as `maxTokens` and `thinkingLevelMap` — which both catalogs carry and `synthesiseModel` maps into pi's `compat.openRouterRouting`, guarded by a construction-time assert so a declaration that cannot reach the wire fails loudly instead of sitting inert. (Hardening) `synthesiseModel` prefers the model's own bundled entry as its template when the base catalog carries that id on the same api, so amending a bundled model stops inheriting a size-picked stranger's `maxTokens` and `input`.
 
 **Tech Stack:** TypeScript 7 (exact pin, `strict`, `exactOptionalPropertyTypes`, `nodenext`), Vitest, Biome. Bun runs scripts; it is never assumed at runtime.
 
 **Spec:** GitHub issue #43 — https://github.com/nathapp-io/nax-ai/issues/43, **as re-scoped by the verification comment of 2026-09-18** on that issue. Read the comment, not just the issue body: two of the body's premises are dead (the `CompleteOptions` anchor is a vestigial type referenced nowhere but `src/index.ts:108`, and pi-ai `0.85.1` already models routing first-class), so the body's "Known workaround" proxy section and its options 1-3 argue from a wire that no longer exists. This plan implements the comment's **P1** and **P2**, and deliberately does **not** implement its **P3** — see "P3: analysed, not folded" at the end.
 
 **Base commit:** every line number below is anchored against `main` @ `11c9d34a01893319a7d5fa88e3dca40ae577c789` (v0.1.14), which is where branch `feat/openrouter-routing-and-response-identity` starts. Line numbers are hints, not addresses: if the file has moved under you, find the symbol by name.
+
+## Verification status — this plan was executed once and reverted
+
+Before handover, every source edit and every test in Tasks 1-5 was applied to a scratch working tree at the base commit, typechecked, run, and then reverted (`git checkout -- .`; the tree is clean and only this document plus a formatting commit exist on the branch). So the literal code below is known to compile and the stated failures are the ones actually observed, not predictions:
+
+| Task | Result when applied |
+|:--|:--|
+| 1 + 2 | `tsc --noEmit` clean; suite **499 passed** (487 baseline + 12 new) |
+| 3 + 4 | `tsc --noEmit` clean; the compat spread typechecks as `Model<Api>`, and a deliberately typo'd key is rejected by `tsc` — so the check is real |
+| 4 | the wire test's `provider` block **did land in the request body**, and the unrouted control sent none |
+| 5 | its two tests failed first with exactly `expected 1800000 to be 16384` and `expected [ 'text', 'image' ] to deeply equal [ 'text' ]`, then passed after the change |
+| all | full suite **506 passed**, `bun run lint` clean. Nothing outside the touched files moved — notably the `#47` thinkingLevelMap suite and the `gpt-4` collision test survive Task 5 unchanged |
+
+Two things that verification changed in this document, worth knowing because they are the kind of thing that looks like a typo: the `responseModel` test snippet in Task 1 Step 6 is written pre-wrapped because Biome reformats the single-line form (120-column rule), and Task 0's README anchor ordering is fixed so three tasks inserting into one section cannot collide.
+
+What was **not** verified, and cannot be here: that any provider actually honours the `provider` block. Task 4 proves the field reaches the request body through pi's real builder; it does not prove OpenRouter routes accordingly. The evidence for that is external — a 2026-09-13 probe measured `quantizations` + `sort` steering real traffic, and found the quantization filter refuses (`"No endpoints found for the request with quantization: fp4"`) rather than silently downgrading.
 
 ## Global Constraints
 
@@ -48,9 +64,134 @@ Five facts, all verified against the base commit and the pinned pi-ai:
 | `src/providers/catalog.ts` | calls the new assert | Client-side catalog |
 | `src/protocols/pi-client.ts` | `done` mapping; `toPiOpenRouterRouting`; `synthesiseModel` template + compat | The only file allowed to touch pi's `Model` |
 | `src/index.ts` | exports `OpenRouterRouting` | New published type |
-| `README.md` | two short subsections | The repo documents caller-visible capability there (`### Constrained sampling` is the precedent) |
+| `README.md` | three subsections: provider overrides (Task 0), response identity (Task 2), routing (Task 4) | The repo documents caller-visible capability there (`### Constrained sampling` is the precedent), and the override mechanism is currently undocumented |
 
 No new source file is created: every change lands in a module that already owns that responsibility, and the largest of them (`pi-client.ts`) grows by roughly 40 lines.
+
+---
+
+### Task 0: Document `ProviderOverride` in the README
+
+Documentation only, no source change, independent of everything below. It comes first because Tasks 2 and 4 hang their own subsections off the section it creates.
+
+**Why it is in this plan:** `grep -i override README.md ROADMAP.md` at the base commit returns **nothing**. The whole override mechanism — three shipped issues' worth of behaviour (#36's two-catalog rule, #39's `maxTokens`, #47's `thinkingLevelMap`) — is documented only in source docstrings, and Task 4 is about to add a fourth field to it. A reader who wants to pin routing has no entry point.
+
+**Files:**
+- Modify: `README.md` (new `### Provider overrides` subsection under `## Usage`)
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces: a `### Provider overrides` heading under `## Usage`, which Tasks 2 and 4 anchor against.
+
+- [ ] **Step 1: Write the section**
+
+In `README.md`, immediately after the paragraph beginning "While the API is unstable…" (which closes the `## Usage` section's example), add:
+
+````markdown
+### Provider overrides
+
+The bundled catalog comes from pi-ai and is a snapshot: it can carry stale pricing, and it will not know a model your provider added last week. `providerOverrides` amends it — per provider, and only with declaration data.
+
+```ts
+import { createClient, defaultProtocols, piProviders, type ProviderOverride } from "@nathapp/nax-ai";
+
+const providerOverrides: readonly ProviderOverride[] = [
+  {
+    provider: "openrouter",
+    models: [
+      {
+        id: "z-ai/glm-5.3-flash",
+        provider: "openrouter",
+        protocol: "openai-completions",
+        pricing: { input: 0.15, output: 0.5, cacheRead: 0.015, cacheWrite: 0 },
+        contextWindow: 200_000,
+        maxTokens: 32_768,
+        supportsTools: true,
+        thinkingLevels: ["off", "high"],
+      },
+    ],
+  },
+];
+
+const client = createClient({
+  providers: await piProviders(["openrouter"]),
+  // The factory form hands the client's own overrides to the protocol side, so
+  // the array is written once. Prefer it whenever overrides are in play — and
+  // add `credentials` here too if you use a credential store (see below).
+  protocols: (o) => defaultProtocols({ ...o }),
+  providerOverrides,
+});
+```
+
+**An override must reach both catalogs.** The client prices and resolves against one; the wire resolves against another. Declaring the array on `createClient` alone is a real bug with no symptom until the first request, so `createClient` rejects it at construction. The factory form above is how you avoid writing the array twice; passing the same array to both `createClient` and `defaultProtocols({ providerOverrides })` works too.
+
+**What an override can say.** A `ProviderOverride` carries `baseUrl`, `headers` and `models`. `baseUrl` and `headers` replace rather than merge, and apply to every model of that provider, bundled ones included — that is how a proxy or a tenant header is wired. Each entry in `models` is a full `ResolvedModel`: `pricing`, `contextWindow`, `maxTokens`, `supportsTools`, `thinkingLevels`, `thinkingLevelMap` and `supportsStrictToolSampling`.
+
+**What it cannot say.** Declaration data only: behaviour belongs in a protocol backend, not here. An override also amends a provider — it cannot introduce one, since there would be no `stream` implementation to inherit.
+
+**Two rules that throw rather than warn.** A model's own `provider` field must equal the override's `provider` (otherwise the request would be signed against a provider you never named), and a model the base catalog does not carry must be declared on both sides.
+
+**Fields you do not state are inherited from a sibling.** `ResolvedModel` is narrower than the wire's model, so `name`, `baseUrl`, `input` and the provider compatibility settings come from another model of the same provider on the same protocol — preferring one that supports your declared thinking levels. State `maxTokens` and `thinkingLevelMap` explicitly when they matter: an inherited ceiling is a silent truncation, and an inherited thinking map can mark a level you declared unsupported.
+````
+
+- [ ] **Step 2: Verify the example actually compiles**
+
+A README example that does not typecheck is worse than none. Prove this one does, in a throwaway file you delete immediately:
+
+```bash
+cat > test/__doc-probe.test.ts <<'PROBE'
+import { describe, it } from "vitest";
+import { createClient } from "../src/client.ts";
+import { defaultProtocols } from "../src/protocols/pi-protocols.ts";
+import { piProviders } from "../src/providers/pi-catalog.ts";
+import type { ProviderOverride } from "../src/providers/types.ts";
+
+const providerOverrides: readonly ProviderOverride[] = [
+  {
+    provider: "openrouter",
+    models: [
+      {
+        id: "z-ai/glm-5.3-flash",
+        provider: "openrouter",
+        protocol: "openai-completions",
+        pricing: { input: 0.15, output: 0.5, cacheRead: 0.015, cacheWrite: 0 },
+        contextWindow: 200_000,
+        maxTokens: 32_768,
+        supportsTools: true,
+        thinkingLevels: ["off", "high"],
+      },
+    ],
+  },
+];
+
+describe("doc probe", () => {
+  it("constructs the client the README describes", async () => {
+    const client = createClient({
+      providers: await piProviders(["openrouter"]),
+      protocols: (o) => defaultProtocols({ ...o }),
+      providerOverrides,
+    });
+    void client;
+  });
+});
+PROBE
+bun run typecheck && bun run test test/__doc-probe.test.ts
+rm test/__doc-probe.test.ts
+```
+
+Expected: typecheck clean and the probe PASSES. It passing is not incidental — it proves the declaration-parity check accepts the factory wiring the README recommends. The probe is the README example verbatim, which is the point: if you edit one, edit both. Delete the file before committing; do not leave it in the suite.
+
+- [ ] **Step 3: Lint**
+
+Run: `bun run lint`
+Expected: PASS. (Biome does not check Markdown, but the gate scripts scan `test/` — run this *after* deleting the probe, and it will catch it if you forgot.)
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add README.md
+git commit -m "docs: document providerOverrides and the two-catalog rule"
+```
 
 ---
 
@@ -101,7 +242,7 @@ This is the one that has real provider evidence behind it. Append inside the `de
 - [ ] **Step 2: Run it and watch it fail**
 
 Run: `bun run test test/protocols/replay.test.ts`
-Expected: FAIL on the four recorded fixtures (`openai-codex-responses-text`, `opencode-go-anthropic-messages-*`, `opencode-go-openai-completions-text`, `opencode-go-openai-responses-text`) with `expected undefined to match object { responseId: 'resp_028d…' }` or equivalent. The two `example-*` fixtures and `error-rate-limit` pass already, because they record no `responseId`.
+Expected: **6 failures** — measured, not predicted: `openai-codex-responses-text`, all three `opencode-go-anthropic-messages-*`, `opencode-go-openai-completions-text` and `opencode-go-openai-responses-text`, each with `AssertionError: expected { type: 'done', stopReason: 'stop' } to match object { Object (responseId) }`. `example-text`, `example-bad-header` and `error-rate-limit` pass already, because they record no `responseId` — which is the absent branch of the same test doing its job.
 
 - [ ] **Step 3: Widen the `done` event**
 
@@ -182,7 +323,11 @@ Expected: PASS, all fixtures.
    */
   it("forwards responseModel when the provider remapped the model", async () => {
     const events = await drain([
-      { type: "done", reason: "stop", message: message({ responseId: "r-1", responseModel: "deepseek-v4-flash-0711" }) },
+      {
+        type: "done",
+        reason: "stop",
+        message: message({ responseId: "r-1", responseModel: "deepseek-v4-flash-0711" }),
+      },
     ] as AssistantMessageEvent[]);
 
     expect(events.at(-1)).toEqual({
@@ -260,7 +405,7 @@ Append to `describe("collectStream", …)` in `test/protocols/collect.test.ts`:
 - [ ] **Step 2: Run it and watch it fail**
 
 Run: `bun run test test/protocols/collect.test.ts`
-Expected: FAIL — `expected undefined to be 'r-1'` on the first test. (The second passes vacuously before the change; it is the guard that keeps the first one's fix honest.)
+Expected: FAIL with exactly `AssertionError: expected undefined to be 'r-1' // Object.is equality` on the first test (measured). The second passes vacuously before the change; it is the guard that keeps the first one's fix honest.
 
 - [ ] **Step 3: Widen `CompleteResult`**
 
@@ -318,7 +463,7 @@ Expected: PASS.
 
 - [ ] **Step 6: Document it**
 
-In `README.md`, immediately after the paragraph beginning "While the API is unstable…" (which closes the `## Usage` section's example), add:
+In `README.md`, directly **before** the existing `### Constrained sampling` heading, add:
 
 ```markdown
 ### Knowing which response you got
@@ -478,8 +623,15 @@ Append inside `describe("normaliseCatalog", …)` in `test/providers/catalog.tes
 
 - [ ] **Step 2: Run them and watch them fail**
 
-Run: `bun run test test/providers/catalog.test.ts`
-Expected: the first test fails to compile (`openRouterRouting` does not exist on `ResolvedModel`) — under Vitest this surfaces as a transform/type error at run time rather than a clean assertion failure, which is still a fail. The two rejection tests fail with "expected function to throw". Do not proceed until you have seen all three fail.
+Run: `bun run typecheck` **first**, then `bun run test test/providers/catalog.test.ts`.
+
+Expected, and this one is not symmetric — it was measured, so do not go hunting for a runtime failure that will not come:
+
+- `bun run typecheck` FAILS on the first test: `openRouterRouting` does not exist on `ResolvedModel`. **That is this test's regression demonstration.**
+- `bun run test` shows the first test **PASSING**. That is not a broken test. Vitest strips types, and `normaliseCatalog` stores an override's `ResolvedModel` by reference (`catalog.ts:110`), so an undeclared property survives into the catalog at run time with no source change at all. The type is the whole contract here; `tsc` is the gate that enforces it.
+- The two rejection tests FAIL at run time with "expected function to throw".
+
+Do not proceed until you have seen the typecheck error and both throw failures.
 
 - [ ] **Step 3: Declare the type and the field**
 
@@ -653,7 +805,7 @@ git commit -m "feat: declare openRouterRouting on ResolvedModel and reject unrea
 
 - [ ] **Step 1: Hoist the wire-payload helper**
 
-`wirePayload` currently lives inside `describe("thinkingLevelMap synthesis (issue #47)", …)` in `test/protocols/pi-client-overrides.test.ts` (the `async function wirePayload(…)` at roughly lines 297-322). Move that function — unchanged, including its docstring — to module scope, directly after the `stubStream` helper near the top of the file. Leave every existing call site as it is; they resolve to the hoisted function.
+`wirePayload` currently lives inside `describe("thinkingLevelMap synthesis (issue #47)", …)` in `test/protocols/pi-client-overrides.test.ts`: its docstring opens at line 297, `async function wirePayload(` is at **line 305**, and its closing brace is at **line 330** (`return captured;` on 329). Move the whole run of lines 297-330 — docstring included, body unchanged — to module scope, directly after the `stubStream` helper near the top of the file. Leave every existing call site as it is; they resolve to the hoisted function. Its `reasoning` parameter type (`"off" | "low" | "high" | "max" | "xhigh"`) already covers the `"off"` the new tests pass, so the signature needs no change.
 
 Run: `bun run test test/protocols/pi-client-overrides.test.ts`
 Expected: PASS, unchanged — this step is a pure move and must not alter a single assertion.
@@ -805,7 +957,7 @@ Expected: PASS, all four.
 
 - [ ] **Step 7: Document it**
 
-In `README.md`, add after the `### Constrained sampling` subsection (before `### Logging in`):
+In `README.md`, directly **after** the `### Provider overrides` subsection Task 0 added (so it sits above `### Knowing which response you got`), add:
 
 ````markdown
 ### Pinning an OpenRouter endpoint
@@ -966,10 +1118,24 @@ Expected: PASS, including the whole pre-existing `thinkingLevelMap synthesis (is
 Run: `bun run test && bun run typecheck && bun run lint`
 Expected: all PASS. If any test outside this file moved, stop and report which one — that would mean a consumer-visible behaviour change this task did not intend.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Update the one README sentence this changes**
+
+Task 0's `### Provider overrides` section ends with a sentence about which sibling supplies the fields an override does not state. It is now one clause out of date. In `README.md`, replace:
+
+```markdown
+— preferring one that supports your declared thinking levels. State
+```
+
+with:
+
+```markdown
+— preferring one that supports your declared thinking levels, and preferring this model's own bundled entry when the catalog already carries that id. State
+```
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/protocols/pi-client.ts test/protocols/pi-client-overrides.test.ts
+git add src/protocols/pi-client.ts test/protocols/pi-client-overrides.test.ts README.md
 git commit -m "fix: template an amended override model off its own bundled entry (#43)"
 ```
 
@@ -996,7 +1162,8 @@ git commit -m "fix: template an amended override model off its own bundled entry
 
 ## Self-review
 
-- **Spec coverage.** P1's two halves → Tasks 1 and 2. P2's typed inlet, its construction-time assert and its wire test → Tasks 3 and 4. P3 → the analysis section above, with an explicit recommendation and a named trigger. The comment's "P1 first, ~20 LOC, provider-agnostic" ordering is preserved: Tasks 1-2 touch nothing OpenRouter-specific.
+- **Spec coverage.** P1's two halves → Tasks 1 and 2. P2's typed inlet, its construction-time assert and its wire test → Tasks 3 and 4. P3 → the analysis section above, with an explicit recommendation and a named trigger. The comment's "P1 first, ~20 LOC, provider-agnostic" ordering is preserved: Tasks 1-2 touch nothing OpenRouter-specific. Task 0 is outside the issue's scope and is here because the mechanism P2 extends has no consumer documentation at all.
+- **Documentation ordering.** Three tasks write into `## Usage`, each at an anchor that does not depend on the others having run: Task 0 after the "While the API is unstable…" paragraph, Task 4 after the section Task 0 adds, Task 2 before `### Constrained sampling`. Task 0 deliberately does not describe Task 5's template rule; Task 5 amends that one sentence itself (its Step 6), so no task documents behaviour that does not yet exist.
 - **Placeholders.** None: every step carries the literal code or the literal command, and every test body is written out rather than described.
 - **Type consistency.** `OpenRouterRouting` (Task 3) is consumed by name in Task 4's import and by `toPiOpenRouterRouting`. `assertOverrideModelRouting(model: ResolvedModel)` takes one argument at both call sites (`catalog.ts`, `applyOverrides`). `responseId` / `responseModel` are spelled identically in `ProtocolEvent`, `collectStream`, `CompleteResult` and all four tests — they are also pi's own spellings, which is why the mapper can destructure them directly.
-- **Anchors.** Verified at `11c9d34`: `src/types.ts:45-51,53-65`; `src/protocols/types.ts:212`; `src/protocols/collect.ts:22-69`; `src/protocols/pi-client.ts:326-340,547-581,652-701`; `src/providers/types.ts:56-119`; `src/providers/catalog.ts:107-112`; `src/providers/override-model.ts:26-33`; `src/index.ts:98-106`. pi-ai `0.85.1`: `dist/types.d.ts:313-314,496,629-654,716-737`; `dist/api/openai-completions.js:374-377,584-596,745-747,761-762`; `dist/api/simple-options.js:11-12`.
+- **Anchors.** Verified at `11c9d34`: `test/protocols/pi-client-overrides.test.ts:297-330` (the `wirePayload` helper Task 4 hoists); `src/providers/catalog.ts:110` (the by-reference store that makes Task 3's carry test a type-level regression); `src/types.ts:45-51,53-65`; `src/protocols/types.ts:212`; `src/protocols/collect.ts:22-69`; `src/protocols/pi-client.ts:326-340,547-581,652-701`; `src/providers/types.ts:56-119`; `src/providers/catalog.ts:107-112`; `src/providers/override-model.ts:26-33`; `src/index.ts:98-106`. pi-ai `0.85.1`: `dist/types.d.ts:313-314,496,629-654,716-737`; `dist/api/openai-completions.js:374-377,584-596,745-747,761-762`; `dist/api/simple-options.js:11-12`.
