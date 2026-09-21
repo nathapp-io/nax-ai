@@ -336,7 +336,17 @@ export function createPiProtocol(name: string, deps: PiDeps): Protocol {
                 };
                 return;
               }
-              yield { type: "done", stopReason };
+              // pi holds both on the terminal message and nax-ai used to drop
+              // them. Conditional spreads because `exactOptionalPropertyTypes`
+              // is on and "the provider reported nothing" must stay
+              // distinguishable from "reported an empty string".
+              const { responseId, responseModel } = event.message;
+              yield {
+                type: "done",
+                stopReason,
+                ...(responseId !== undefined ? { responseId } : {}),
+                ...(responseModel !== undefined ? { responseModel } : {}),
+              };
               return;
             }
 
