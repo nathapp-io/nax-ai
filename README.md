@@ -1,3 +1,7 @@
+> **This repository is archived.** `@nathapp/nax-ai` now lives in the nax monorepo at
+> [`nathapp-io/nax` / `packages/nax-ai`](https://github.com/nathapp-io/nax/tree/main/packages/nax-ai),
+> with its full history. Issues, pull requests and releases (`nax-ai-v*` tags) go there.
+
 # @nathapp/nax-ai
 
 Provider-agnostic LLM client: completions, streaming, tool calls, usage accounting and auth across API-key and OAuth providers.
